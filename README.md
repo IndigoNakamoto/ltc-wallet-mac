@@ -4,25 +4,40 @@ Native macOS Litecoin wallet built on the Litecoin BDK fork ([`IndigoNakamoto/bd
 
 ## Status
 
-Scaffold + architecture only. **v0.1** = transparent BIP84 (Electrum sync / send). **v0.2** = MWEB.
+**v0.1 in progress** — transparent BIP84 create/load + Electrum sync/send via `wallet-core` and `wallet-cli`. **v0.2** = MWEB. Tauri/UI not scaffolded yet.
 
 Read [`docs/CHAT_HANDOFF.md`](docs/CHAT_HANDOFF.md) before implementing. Full blueprint: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Expected sibling checkouts
 
 ```text
-../bdk          # branch litecoin
-../bdk_wallet   # branch litecoin
+../bdk              # branch litecoin (includes nested bdk_wallet)
+../rust-litecoin    # litecoin 0.32.8-rc.2 (workspace [patch])
 ```
 
 ## Layout
 
 | Path | Role |
 | --- | --- |
-| `crates/wallet-core` | BDK boundary, DTOs, Keychain-backed mnemonic |
+| `crates/wallet-core` | BDK boundary, DTOs, Keychain-backed mnemonic, Electrum sync/send |
+| `crates/wallet-cli` | Smoke CLI: create → sync → address → send |
 | `src-tauri` | Tauri commands (not scaffolded yet) |
 | `ui` | Frontend (not scaffolded yet) |
 
+## Testnet smoke (Electrum)
+
+```bash
+cargo run -p wallet-cli -- --data-dir .wallet-data create
+cargo run -p wallet-cli -- --data-dir .wallet-data address
+# fund the tltc1… address (e.g. CypherFaucet)
+cargo run -p wallet-cli -- --data-dir .wallet-data sync
+cargo run -p wallet-cli -- --data-dir .wallet-data send \
+  --address <tltc1…> --amount-sats 5000 --fee-rate 1
+cargo run -p wallet-cli -- --data-dir .wallet-data sync
+```
+
+Default Electrum: `ssl://electrum-ltc.bysh.me:51002` (testnet).
+
 ## Next step
 
-Implement `wallet-core` BIP84 `PersistedWallet` create/load + Electrum sync against Litecoin testnet.
+Scaffold Tauri; wire commands to `wallet-core`; then UI screens.

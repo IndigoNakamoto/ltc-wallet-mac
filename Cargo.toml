@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/wallet-core"]
+members = ["crates/wallet-core", "crates/wallet-cli"]
 
 [workspace.package]
 edition = "2021"

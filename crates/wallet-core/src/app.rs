@@ -1,14 +1,18 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
+use bdk_wallet::bitcoin::{Address, Amount, FeeRate};
+use bdk_wallet::psbt::PsbtUtils;
 use bdk_wallet::rusqlite::Connection;
-use bdk_wallet::{KeychainKind, PersistedWallet};
+use bdk_wallet::{KeychainKind, PersistedWallet, SignOptions};
 
 use crate::descriptors::{self, create_params, load_params, parse_mnemonic};
 use crate::dto::{
     CreateWalletRequest, CreateWalletResponse, RestoreWalletRequest, SendRequest, SendResult,
     SyncResult, WalletSummary,
 };
+use crate::electrum::{self, BATCH_SIZE, STOP_GAP};
 use crate::error::WalletError;
 use crate::meta::{self, WalletMeta};
 use crate::network::WalletNetwork;
@@ -18,8 +22,9 @@ struct WalletState {
     wallet: PersistedWallet<Connection>,
     db: Connection,
     network: WalletNetwork,
-    #[allow(dead_code)]
     electrum_url: String,
+    data_dir: PathBuf,
+    needs_full_scan: bool,
 }
 
 /// Application-facing wallet handle. BDK types stay private.
@@ -94,30 +99,22 @@ impl WalletApp {
             db,
             network: meta.network,
             electrum_url: meta.electrum_url,
+            data_dir: data_dir.to_path_buf(),
+            needs_full_scan: meta.needs_full_scan,
         };
         let summary = build_summary(&mut state)?;
-        *self
-            .state
-            .lock()
-            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))? =
-            Some(state);
+        *self.lock_state()? = Some(state);
         Ok(summary)
     }
 
     pub fn summary(&self) -> Result<WalletSummary, WalletError> {
-        let mut guard = self
-            .state
-            .lock()
-            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
         build_summary(state)
     }
 
     pub fn receive_address(&self) -> Result<String, WalletError> {
-        let mut guard = self
-            .state
-            .lock()
-            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
         let address = state
             .wallet
@@ -131,11 +128,107 @@ impl WalletApp {
     }
 
     pub fn sync(&self) -> Result<SyncResult, WalletError> {
-        Err(WalletError::NotImplemented("sync"))
+        let mut guard = self.lock_state()?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+
+        let client = electrum::connect(&state.electrum_url)?;
+        client.populate_tx_cache(state.wallet.tx_graph().full_txs().map(|tx_node| tx_node.tx));
+
+        let tx_count_before = state.wallet.transactions().count();
+        let did_full_scan = state.needs_full_scan;
+
+        if did_full_scan {
+            let request = state.wallet.start_full_scan();
+            let update = client
+                .full_scan(request, STOP_GAP, BATCH_SIZE, false)
+                .map_err(|e| WalletError::Electrum(e.to_string()))?;
+            state
+                .wallet
+                .apply_update(update)
+                .map_err(|e| WalletError::Electrum(e.to_string()))?;
+        } else {
+            let request = state.wallet.start_sync_with_revealed_spks();
+            let update = client
+                .sync(request, BATCH_SIZE, false)
+                .map_err(|e| WalletError::Electrum(e.to_string()))?;
+            state
+                .wallet
+                .apply_update(update)
+                .map_err(|e| WalletError::Electrum(e.to_string()))?;
+        }
+
+        state
+            .wallet
+            .persist(&mut state.db)
+            .map_err(|e| WalletError::Persist(e.to_string()))?;
+
+        if did_full_scan {
+            state.needs_full_scan = false;
+            let meta = WalletMeta {
+                network: state.network,
+                electrum_url: state.electrum_url.clone(),
+                needs_full_scan: false,
+            };
+            meta::write_meta(&state.data_dir, &meta)?;
+        }
+
+        let tx_count_after = state.wallet.transactions().count();
+        let new_txs = tx_count_after.saturating_sub(tx_count_before) as u32;
+        let summary = build_summary(state)?;
+        Ok(SyncResult { summary, new_txs })
     }
 
-    pub fn send(&self, _req: SendRequest) -> Result<SendResult, WalletError> {
-        Err(WalletError::NotImplemented("send"))
+    pub fn send(&self, req: SendRequest) -> Result<SendResult, WalletError> {
+        let mut guard = self.lock_state()?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+
+        let network = state.network.to_bitcoin_network();
+        let address = Address::from_str(&req.address)
+            .map_err(|e| WalletError::InvalidAddress(e.to_string()))?
+            .require_network(network)
+            .map_err(|e| WalletError::InvalidAddress(e.to_string()))?;
+
+        let fee_rate = FeeRate::from_sat_per_vb(req.fee_rate_sat_vb)
+            .ok_or_else(|| WalletError::BuildTx("fee_rate_sat_vb must be non-zero".into()))?;
+        let amount = Amount::from_sat(req.amount_sats);
+
+        let mut tx_builder = state.wallet.build_tx();
+        tx_builder.add_recipient(address.script_pubkey(), amount);
+        tx_builder.fee_rate(fee_rate);
+        let mut psbt = tx_builder
+            .finish()
+            .map_err(|e| WalletError::BuildTx(e.to_string()))?;
+
+        let finalized = state
+            .wallet
+            .sign(&mut psbt, SignOptions::default())
+            .map_err(|e| WalletError::Sign(e.to_string()))?;
+        if !finalized {
+            return Err(WalletError::Sign("transaction not fully signed".into()));
+        }
+
+        let fee_sats = psbt
+            .fee_amount()
+            .ok_or_else(|| WalletError::BuildTx("unable to compute fee".into()))?
+            .to_sat();
+        let tx = psbt
+            .extract_tx()
+            .map_err(|e| WalletError::BuildTx(e.to_string()))?;
+
+        let client = electrum::connect(&state.electrum_url)?;
+        client
+            .transaction_broadcast(&tx)
+            .map_err(|e| WalletError::Electrum(e.to_string()))?;
+
+        state
+            .wallet
+            .persist(&mut state.db)
+            .map_err(|e| WalletError::Persist(e.to_string()))?;
+
+        Ok(SendResult {
+            txid: tx.compute_txid().to_string(),
+            fee_sats,
+        })
     }
 
     fn create_or_restore(
@@ -173,14 +266,20 @@ impl WalletApp {
             db,
             network,
             electrum_url: meta.electrum_url,
+            data_dir: data_dir.to_path_buf(),
+            needs_full_scan: meta.needs_full_scan,
         };
         let summary = build_summary(&mut state)?;
-        *self
-            .state
-            .lock()
-            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))? =
-            Some(state);
+        *self.lock_state()? = Some(state);
         Ok(summary)
+    }
+
+    fn lock_state(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, Option<WalletState>>, WalletError> {
+        self.state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))
     }
 }
 

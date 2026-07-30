@@ -118,7 +118,7 @@ fn restore_known_mnemonic_is_deterministic() {
 }
 
 #[test]
-fn sync_and_send_are_stubbed() {
+fn send_rejects_invalid_address() {
     let dir = tempdir().unwrap();
     let app = test_app();
     app.create(
@@ -130,17 +130,31 @@ fn sync_and_send_are_stubbed() {
     )
     .unwrap();
 
-    assert!(matches!(
-        app.sync().unwrap_err(),
-        WalletError::NotImplemented("sync")
-    ));
-    assert!(matches!(
-        app.send(wallet_core::SendRequest {
-            address: "tltc1qhl85z42h7r4su5u37rvvw0gk8j2t3n9y82jk96".into(),
+    let err = app
+        .send(wallet_core::SendRequest {
+            address: "not-an-address".into(),
             amount_sats: 1000,
             fee_rate_sat_vb: 1,
         })
-        .unwrap_err(),
-        WalletError::NotImplemented("send")
-    ));
+        .expect_err("invalid address");
+    assert!(matches!(err, WalletError::InvalidAddress(_)));
+}
+
+#[test]
+fn create_marks_needs_full_scan_in_meta() {
+    let dir = tempdir().unwrap();
+    let app = test_app();
+    app.create(
+        dir.path(),
+        CreateWalletRequest {
+            network: WalletNetwork::Testnet,
+            electrum_url: None,
+        },
+    )
+    .unwrap();
+
+    let meta_path = dir.path().join("wallet_meta.json");
+    let meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(meta_path).unwrap()).unwrap();
+    assert_eq!(meta["needs_full_scan"], true);
 }

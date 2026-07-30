@@ -13,6 +13,7 @@ bdk_wallet = { path = "../../../bdk/bdk_wallet", default-features = false, featu
     "rusqlite",
     "keys-bip39",
 ] }
+bdk_electrum = { path = "../../../bdk/crates/electrum", default-features = true }
 keyring = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -2,6 +2,8 @@
 
 Rust library that owns BDK wallet lifecycle for the Mac app.
 
-**Not implemented yet.** See [`../../docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md) for the intended API (`WalletApp`, DTOs, Electrum sync, `keyring` mnemonic storage).
+Public surface: `WalletApp` (`exists` / `create` / `restore` / `load` / `sync` / `summary` / `receive_address` / `send`) with serde DTOs only. See [`../../docs/ARCHITECTURE.md`](../../docs/ARCHITECTURE.md).
 
-Planned first slice: BIP84 descriptor generation + `PersistedWallet` create/load with `rusqlite`, path-depending sibling `bdk` / `bdk_wallet` `litecoin` branches.
+BIP84 descriptors + `PersistedWallet` (`rusqlite`); mnemonic via `SecretStore` (macOS Keychain). Sync/send use Electrum-LTC (`bdk_electrum`).
+
+Smoke against testnet with `wallet-cli` (see root README).

@@ -9,11 +9,18 @@ use crate::network::WalletNetwork;
 pub const WALLET_DB_FILE: &str = "wallet.sqlite";
 pub const WALLET_META_FILE: &str = "wallet_meta.json";
 
+fn default_true() -> bool {
+    true
+}
+
 /// Lightweight metadata stored beside the BDK sqlite DB (never secrets).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WalletMeta {
     pub network: WalletNetwork,
     pub electrum_url: String,
+    /// When true, the next sync runs a BIP84 full_scan; cleared after success.
+    #[serde(default = "default_true")]
+    pub needs_full_scan: bool,
 }
 
 impl WalletMeta {
@@ -22,6 +29,7 @@ impl WalletMeta {
             network,
             electrum_url: electrum_url
                 .unwrap_or_else(|| network.default_electrum_url().to_string()),
+            needs_full_scan: true,
         }
     }
 }

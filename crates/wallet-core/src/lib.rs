@@ -5,6 +5,7 @@
 mod app;
 mod descriptors;
 mod dto;
+mod electrum;
 mod error;
 mod meta;
 mod network;
