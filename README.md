@@ -1,12 +1,12 @@
 # ltc-wallet-mac
 
-Native macOS Litecoin wallet built on the Litecoin BDK fork ([`IndigoNakamoto/bdk`](https://github.com/IndigoNakamoto/bdk) + [`bdk_wallet`](https://github.com/IndigoNakamoto/bdk_wallet)), with a Tauri shell.
+Native macOS Litecoin wallet built on the Litecoin BDK fork ([`IndigoNakamoto/bdk`](https://github.com/IndigoNakamoto/bdk) + [`bdk_wallet`](https://github.com/IndigoNakamoto/bdk_wallet)), with a Tauri 2 shell.
 
 ## Status
 
-**v0.1 in progress** — transparent BIP84 create/load + Electrum sync/send via `wallet-core` and `wallet-cli`. **v0.2** = MWEB. Tauri/UI not scaffolded yet.
+**v0.1 in progress** — BIP84 create/load, Electrum sync/send, Tauri commands + minimal boot UI. **v0.2** = MWEB.
 
-Read [`docs/CHAT_HANDOFF.md`](docs/CHAT_HANDOFF.md) before implementing. Full blueprint: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Read [`docs/CHAT_HANDOFF.md`](docs/CHAT_HANDOFF.md). Blueprint: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Expected sibling checkouts
 
@@ -19,25 +19,31 @@ Read [`docs/CHAT_HANDOFF.md`](docs/CHAT_HANDOFF.md) before implementing. Full bl
 
 | Path | Role |
 | --- | --- |
-| `crates/wallet-core` | BDK boundary, DTOs, Keychain-backed mnemonic, Electrum sync/send |
+| `crates/wallet-core` | BDK boundary, DTOs, Keychain, Electrum |
 | `crates/wallet-cli` | Smoke CLI: create → sync → address → send |
-| `src-tauri` | Tauri commands (not scaffolded yet) |
-| `ui` | Frontend (not scaffolded yet) |
+| `src-tauri` | Tauri 2 commands → `wallet-core` |
+| `ui` | Minimal onboarding / home UI |
 
-## Testnet smoke (Electrum)
+## Dev
+
+```bash
+npm install
+npm run tauri dev
+```
+
+Wallet data: `~/Library/Application Support/com.indigonakamoto.ltc-wallet/`.
+
+## Testnet CLI smoke
 
 ```bash
 cargo run -p wallet-cli -- --data-dir .wallet-data create
 cargo run -p wallet-cli -- --data-dir .wallet-data address
-# fund the tltc1… address (e.g. CypherFaucet)
+# fund the tltc1… address
 cargo run -p wallet-cli -- --data-dir .wallet-data sync
 cargo run -p wallet-cli -- --data-dir .wallet-data send \
   --address <tltc1…> --amount-sats 5000 --fee-rate 1
-cargo run -p wallet-cli -- --data-dir .wallet-data sync
 ```
-
-Default Electrum: `ssl://electrum-ltc.bysh.me:51002` (testnet).
 
 ## Next step
 
-Scaffold Tauri; wire commands to `wallet-core`; then UI screens.
+Polish UI screens (send form, clearer balance), then packaging (icon / notarization).

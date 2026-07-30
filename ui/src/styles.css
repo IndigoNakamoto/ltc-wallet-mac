@@ -1,0 +1,112 @@
+:root {
+  color-scheme: light;
+  --bg: #f3efe6;
+  --ink: #1c1a16;
+  --muted: #5c574e;
+  --accent: #345c3a;
+  --accent-ink: #f7f4ec;
+  --danger: #8b2e2e;
+  --panel: #fffdf8;
+  --line: #d6d0c4;
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  background:
+    radial-gradient(ellipse at top, #fff9eb 0%, transparent 55%),
+    linear-gradient(160deg, #ebe4d6 0%, var(--bg) 45%, #e2ddd1 100%);
+}
+
+.container {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 3rem;
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+  font-size: 2.4rem;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+}
+
+.phase {
+  margin: 0 0 1.5rem;
+  color: var(--muted);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 1.25rem 1.35rem 1.5rem;
+  margin-bottom: 1rem;
+}
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.85rem 0;
+}
+
+button {
+  appearance: none;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  padding: 0.55rem 0.95rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+textarea {
+  width: 100%;
+  font: inherit;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  resize: vertical;
+}
+
+.summary,
+#mnemonic-text,
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.error {
+  color: var(--danger);
+  margin: 0 0 1rem;
+}
+
+.status {
+  color: var(--muted);
+  min-height: 1.25rem;
+}

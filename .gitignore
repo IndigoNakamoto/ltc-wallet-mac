@@ -3,9 +3,10 @@
 **/target
 Cargo.lock
 
-# Node / frontend (when added)
+# Node / frontend
 node_modules/
 dist/
+ui/dist/
 .ui-dist/
 
 # Tauri

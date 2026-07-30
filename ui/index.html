@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LTC Wallet</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+  <body>
+    <main class="container">
+      <h1>LTC Wallet</h1>
+      <p class="phase" id="phase">booting…</p>
+      <p class="error" id="error" hidden></p>
+
+      <section id="onboarding" class="panel" hidden>
+        <h2>Onboarding</h2>
+        <p>Create a new testnet wallet or restore from a mnemonic.</p>
+        <div class="row">
+          <button type="button" id="btn-create">Create wallet</button>
+        </div>
+        <label>
+          Mnemonic
+          <textarea id="restore-mnemonic" rows="3" placeholder="twelve words…"></textarea>
+        </label>
+        <div class="row">
+          <button type="button" id="btn-restore">Restore wallet</button>
+        </div>
+      </section>
+
+      <section id="mnemonic" class="panel" hidden>
+        <h2>Backup mnemonic</h2>
+        <p>Write this down. It is shown once.</p>
+        <pre id="mnemonic-text"></pre>
+        <button type="button" id="btn-mnemonic-done">I saved it</button>
+      </section>
+
+      <section id="ready" class="panel" hidden>
+        <h2>Home</h2>
+        <pre id="summary" class="summary"></pre>
+        <div class="row">
+          <button type="button" id="btn-sync">Sync</button>
+          <button type="button" id="btn-address">Receive address</button>
+          <button type="button" id="btn-refresh">Refresh</button>
+        </div>
+        <p id="address" class="mono"></p>
+        <p id="status" class="status"></p>
+      </section>
+    </main>
+  </body>
+</html>
