@@ -14,7 +14,7 @@ src-tauri/gen
 *.app
 
 # Wallet data / secrets (never commit)
-**/*SECRET*
+**/*SECRET*.{txt,pem,key,bin}
 **/*.sqlite
 **/*.sqlite-*
 **/mweb.db
