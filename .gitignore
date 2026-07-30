@@ -1,0 +1,32 @@
+# Rust
+/target
+**/target
+Cargo.lock
+
+# Node / frontend (when added)
+node_modules/
+dist/
+.ui-dist/
+
+# Tauri
+src-tauri/target
+src-tauri/gen
+*.app
+
+# Wallet data / secrets (never commit)
+**/*SECRET*
+**/*.sqlite
+**/*.sqlite-*
+**/mweb.db
+**/mweb_sync.json
+.wallet-data/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Env
+.env
+.env.*

@@ -1,0 +1,22 @@
+[package]
+name = "wallet-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "BDK boundary, DTOs, and Keychain-backed mnemonic storage for the Litecoin Mac wallet"
+
+[dependencies]
+# Nested checkout under ../../bdk so path deps to bdk/crates/* resolve.
+bdk_wallet = { path = "../../../bdk/bdk_wallet", default-features = false, features = [
+    "std",
+    "rusqlite",
+    "keys-bip39",
+] }
+keyring = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

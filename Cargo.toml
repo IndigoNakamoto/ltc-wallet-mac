@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = ["crates/wallet-core"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.85.0"
+license = "MIT OR Apache-2.0"
+
+# Until crates.io publishes litecoin 0.32.8-rc.2 (matches nested bdk_wallet).
+[patch.crates-io]
+litecoin = { path = "../rust-litecoin/litecoin" }
