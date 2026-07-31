@@ -15,7 +15,7 @@ use crate::descriptors::{self, create_params, load_params, parse_mnemonic};
 use crate::dto::{
     CombinedSummary, CreateWalletRequest, CreateWalletResponse, MigrateEncryptRequest,
     MwebBroadcastResult, MwebSendRequest, PeginRequest, PeginResult, PegoutRequest,
-    RestoreWalletRequest, SendRequest, SendResult, SyncResult, TxRecord, UnlockRequest,
+    RestoreWalletRequest, SendRequest, SendResult, SyncResult, TxKind, TxRecord, UnlockRequest,
     UpdateSettingsRequest, WalletSettings, WalletSummary,
 };
 use crate::electrum::{self, BATCH_SIZE, STOP_GAP};
@@ -288,9 +288,13 @@ impl WalletApp {
                     height,
                     confirmations,
                     timestamp,
+                    kind: TxKind::Transparent,
                 }
             })
             .collect();
+        if let Some(ref mweb) = state.mweb {
+            merge_mweb_history(&mut records, mweb, tip);
+        }
         records.sort_by(|a, b| match (a.height, b.height) {
             (None, Some(_)) => std::cmp::Ordering::Less,
             (Some(_), None) => std::cmp::Ordering::Greater,
@@ -348,7 +352,7 @@ impl WalletApp {
         state.active_electrum_url = None;
         state.litecoin_rpc_url = req
             .litecoin_rpc_url
-            .map(|s| s.trim().to_string())
+            .map(|s| crate::rpc::normalize_rpc_url(&s))
             .filter(|s| !s.is_empty());
         state.mweb_peers = req
             .mweb_peers
@@ -554,7 +558,9 @@ impl WalletApp {
         let client = connect_electrum(state)?;
         client
             .transaction_broadcast(&tx)
-            .map_err(|e| WalletError::Electrum(e.to_string()))?;
+            .map_err(|e| {
+                WalletError::Electrum(crate::error::humanize_broadcast_error(&e.to_string()))
+            })?;
 
         state
             .wallet
@@ -571,12 +577,14 @@ impl WalletApp {
         self.ensure_unlocked()?;
         let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
-        let client = connect_electrum(state)?;
+        let rpc_url = state.litecoin_rpc_url.clone();
+        let peers = state.mweb_peers.clone();
+        let network = state.network;
         let mweb = state
             .mweb
             .as_mut()
             .ok_or_else(|| WalletError::Mweb("MWEB runtime not initialized".into()))?;
-        let result = mweb::pegin(&mut state.wallet, mweb, &client, req)?;
+        let result = mweb::pegin(&mut state.wallet, mweb, rpc_url.as_deref(), &peers, req, network)?;
         state
             .wallet
             .persist(&mut state.db)
@@ -589,18 +597,15 @@ impl WalletApp {
         self.ensure_unlocked()?;
         let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
-        let rpc_url = state.litecoin_rpc_url.clone().ok_or_else(|| {
-            WalletError::Rpc(
-                "Litecoin RPC URL required for pure MWEB broadcast; configure it in Settings"
-                    .into(),
-            )
-        })?;
+        let rpc_url = state.litecoin_rpc_url.clone();
+        let peers = state.mweb_peers.clone();
         let mweb = state
             .mweb
             .as_mut()
             .ok_or_else(|| WalletError::Mweb("MWEB runtime not initialized".into()))?;
         let network = state.network;
-        let result = mweb::mweb_send(&state.wallet, mweb, &rpc_url, req, network)?;
+        let result =
+            mweb::mweb_send(&state.wallet, mweb, rpc_url.as_deref(), &peers, req, network)?;
         mweb.persist(&state.data_dir)?;
         Ok(result)
     }
@@ -609,18 +614,14 @@ impl WalletApp {
         self.ensure_unlocked()?;
         let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
-        let rpc_url = state.litecoin_rpc_url.clone().ok_or_else(|| {
-            WalletError::Rpc(
-                "Litecoin RPC URL required for pure MWEB broadcast; configure it in Settings"
-                    .into(),
-            )
-        })?;
+        let rpc_url = state.litecoin_rpc_url.clone();
+        let peers = state.mweb_peers.clone();
         let mweb = state
             .mweb
             .as_mut()
             .ok_or_else(|| WalletError::Mweb("MWEB runtime not initialized".into()))?;
         let network = state.network;
-        let result = mweb::pegout(&state.wallet, mweb, &rpc_url, req, network)?;
+        let result = mweb::pegout(&state.wallet, mweb, rpc_url.as_deref(), &peers, req, network)?;
         mweb.persist(&state.data_dir)?;
         Ok(result)
     }
@@ -892,6 +893,57 @@ impl MemoryBackedApp {
             .lock()
             .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))? = Some(state);
         Ok(summary)
+    }
+}
+
+/// Overlay MWEB activity onto the transparent history.
+///
+/// A peg-in's transparent tx shows up in the BDK graph after a sync; when its
+/// txid matches a log entry we only tag the existing record instead of adding
+/// a duplicate. All other entries (peg-outs, MWEB sends/receives) have no
+/// transparent record and are appended as standalone records.
+fn merge_mweb_history(records: &mut Vec<TxRecord>, mweb: &MwebRuntime, tip: u32) {
+    let by_txid: std::collections::HashMap<String, usize> = records
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.txid.clone(), i))
+        .collect();
+    for entry in &mweb.history.entries {
+        if let Some(&i) = by_txid.get(&entry.id) {
+            records[i].kind = entry.kind;
+            continue;
+        }
+        // Derive confirmation height from the coins this tx created for us
+        // (received coins, or the change coin of an outgoing tx).
+        let mut height: Option<u32> = None;
+        for id_hex in &entry.output_ids {
+            let Ok(bytes) = hex::decode(id_hex) else { continue };
+            let Ok(id) = <[u8; 32]>::try_from(bytes.as_slice()) else {
+                continue;
+            };
+            let coin = mweb
+                .store
+                .db()
+                .get(&id)
+                .or_else(|| mweb.store.db().get_spent(&id));
+            if let Some(h) = coin.and_then(|c| c.block_height) {
+                height = Some(height.map_or(h, |cur| cur.min(h)));
+            }
+        }
+        let confirmations = height
+            .map(|h| tip.saturating_sub(h).saturating_add(1))
+            .unwrap_or(0);
+        records.push(TxRecord {
+            txid: entry.id.clone(),
+            net_sats: entry.net_sats,
+            sent_sats: (-entry.net_sats).max(0) as u64,
+            received_sats: entry.net_sats.max(0) as u64,
+            fee_sats: entry.fee_sats,
+            height,
+            confirmations,
+            timestamp: Some(entry.timestamp),
+            kind: entry.kind,
+        });
     }
 }
 

@@ -67,9 +67,23 @@ pub struct SendResult {
     pub fee_sats: u64,
 }
 
+/// What a history record represents, so the UI can label it.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TxKind {
+    /// Plain transparent transaction.
+    #[default]
+    Transparent,
+    Pegin,
+    Pegout,
+    MwebSend,
+    MwebReceive,
+}
+
 /// A wallet-relevant transaction for history UI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TxRecord {
+    /// Transparent txid; wtxid or output id for MWEB-only records.
     pub txid: String,
     /// Net change for the wallet (received − sent); negative for outgoing.
     pub net_sats: i64,
@@ -83,6 +97,9 @@ pub struct TxRecord {
     pub confirmations: u32,
     /// Confirmation timestamp (unix seconds) when known.
     pub timestamp: Option<u64>,
+    /// Kind of activity (transparent, peg-in, peg-out, MWEB send/receive).
+    #[serde(default)]
+    pub kind: TxKind,
 }
 
 /// Request to unlock an encrypted wallet.

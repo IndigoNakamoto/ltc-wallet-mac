@@ -12,6 +12,7 @@ pub const WALLET_META_FILE: &str = "wallet_meta.json";
 pub const MWEB_DB_FILE: &str = "mweb.sqlite";
 pub const MWEB_SYNC_FILE: &str = "mweb_sync.json";
 pub const MWEB_INDEX_FILE: &str = "mweb_receive_index.txt";
+pub const MWEB_HISTORY_FILE: &str = "mweb_history.json";
 
 fn default_true() -> bool {
     true
@@ -74,6 +75,10 @@ pub fn mweb_index_path(data_dir: &Path) -> PathBuf {
     data_dir.join(MWEB_INDEX_FILE)
 }
 
+pub fn mweb_history_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(MWEB_HISTORY_FILE)
+}
+
 pub fn write_meta(data_dir: &Path, meta: &WalletMeta) -> Result<(), WalletError> {
     fs::create_dir_all(data_dir)?;
     let json =
@@ -124,6 +129,7 @@ pub fn remove_wallet_files(data_dir: &Path) -> Result<(), WalletError> {
         meta_path(data_dir),
         mweb_sync_path(data_dir),
         mweb_index_path(data_dir),
+        mweb_history_path(data_dir),
         data_dir.join(MNEMONIC_FILE),
         data_dir.join(MNEMONIC_ENC_FILE),
     ] {

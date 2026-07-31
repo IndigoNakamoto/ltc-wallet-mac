@@ -9,6 +9,7 @@ mod electrum;
 mod error;
 mod meta;
 mod mweb;
+mod mweb_history;
 mod network;
 mod rpc;
 mod secrets;
@@ -17,7 +18,7 @@ pub use app::{MemoryBackedApp, WalletApp};
 pub use dto::{
     CombinedSummary, CreateWalletRequest, CreateWalletResponse, MigrateEncryptRequest,
     MwebBroadcastResult, MwebSendRequest, MwebSyncProgress, PeginRequest, PeginResult,
-    PegoutRequest, RestoreWalletRequest, SendRequest, SendResult, SyncResult, TxRecord,
+    PegoutRequest, RestoreWalletRequest, SendRequest, SendResult, SyncResult, TxKind, TxRecord,
     UnlockRequest, UpdateSettingsRequest, WalletSettings, WalletSummary,
 };
 pub use error::WalletError;

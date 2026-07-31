@@ -41,6 +41,8 @@ type SendResult = {
   fee_sats: number;
 };
 
+type TxKind = "transparent" | "pegin" | "pegout" | "mweb-send" | "mweb-receive";
+
 type TxRecord = {
   txid: string;
   net_sats: number;
@@ -50,6 +52,15 @@ type TxRecord = {
   height: number | null;
   confirmations: number;
   timestamp: number | null;
+  kind: TxKind;
+};
+
+const TX_KIND_LABELS: Record<TxKind, string> = {
+  transparent: "",
+  pegin: "peg-in",
+  pegout: "peg-out",
+  "mweb-send": "mweb send",
+  "mweb-receive": "mweb receive",
 };
 
 type WalletSettings = {
@@ -168,15 +179,26 @@ function formatLitoshis(sats: number): string {
 
 /** Parse LTC decimal string to litoshis. Rejects commas, negatives, >8 decimals. */
 function parseLtcToSats(input: string): number | null {
-  const raw = input.trim();
+  // Strip all whitespace (incl. non-breaking/narrow spaces from pasted text).
+  const raw = input.replace(/[\s\u00a0\u202f]+/g, "");
   if (!raw || raw === "." || raw.includes(",") || raw.startsWith("-")) return null;
-  if (!/^\d+(\.\d*)?$/.test(raw)) return null;
-  const [wholePart, fracPart = ""] = raw.split(".");
+  // Allow ".009" and "5." in addition to "0.009".
+  if (!/^(\d+(\.\d*)?|\.\d+)$/.test(raw)) return null;
+  const [wholePart = "", fracPart = ""] = raw.split(".");
   if (fracPart.length > 8) return null;
-  const whole = Number(wholePart);
+  const whole = wholePart ? Number(wholePart) : 0;
   if (!Number.isSafeInteger(whole)) return null;
   const frac = fracPart.padEnd(8, "0");
   return whole * 100_000_000 + Number(frac);
+}
+
+function amountError(field: string, rawValue: string): string {
+  const shown = rawValue.trim();
+  if (!shown) return `Enter a ${field} amount in LTC.`;
+  if (shown.includes(",")) {
+    return `Invalid ${field} amount "${shown}" — use a dot as the decimal separator (e.g. 0.009), no commas.`;
+  }
+  return `Invalid ${field} amount "${shown}" — enter LTC like 0.009 (max 8 decimal places).`;
 }
 
 function setPhase(next: Phase) {
@@ -317,10 +339,12 @@ function renderHistory(txs: TxRecord[]) {
     const dir = tx.net_sats >= 0 ? "in" : "out";
     const conf =
       tx.confirmations === 0 ? "pending" : `${tx.confirmations} conf`;
+    const kindLabel = TX_KIND_LABELS[tx.kind] ?? "";
+    const confText = kindLabel ? `${kindLabel} · ${conf}` : conf;
     const short = `${tx.txid.slice(0, 8)}…${tx.txid.slice(-8)}`;
     li.innerHTML = `<span class="tx-dir ${dir}">${dir}</span>
       <span class="tx-amt">${formatLtc(Math.abs(tx.net_sats))}</span>
-      <span class="tx-conf muted">${conf}</span>
+      <span class="tx-conf muted">${confText}</span>
       <span class="tx-id mono muted">${short}</span>`;
     el.txList.appendChild(li);
   }
@@ -768,7 +792,7 @@ el.btnLock.addEventListener("click", async () => {
 el.btnPegin.addEventListener("click", async () => {
   const amount_sats = parseLtcToSats(el.peginAmount.value);
   if (amount_sats == null || amount_sats <= 0) {
-    setError("Enter a valid peg-in amount in LTC.");
+    setError(amountError("peg-in", el.peginAmount.value));
     return;
   }
   sending = true;
@@ -786,6 +810,7 @@ el.btnPegin.addEventListener("click", async () => {
     await runSync({ quiet: false });
   } catch (e) {
     setError(String(e));
+    el.status.textContent = "";
     sending = false;
     updateBusyUi();
   }
@@ -793,9 +818,13 @@ el.btnPegin.addEventListener("click", async () => {
 
 el.btnMwebSend.addEventListener("click", async () => {
   const address = el.mwebSendAddress.value.trim();
+  if (!address) {
+    setError("Enter an MWEB send address (ltcmweb1…).");
+    return;
+  }
   const amount_sats = parseLtcToSats(el.mwebSendAmount.value);
-  if (!address || amount_sats == null) {
-    setError("Enter MWEB address and amount.");
+  if (amount_sats == null) {
+    setError(amountError("MWEB send", el.mwebSendAmount.value));
     return;
   }
   sending = true;
@@ -809,8 +838,10 @@ el.btnMwebSend.addEventListener("click", async () => {
     sending = false;
     updateBusyUi();
     await refreshCombined();
+    await refreshHistory();
   } catch (e) {
     setError(String(e));
+    el.status.textContent = "";
     sending = false;
     updateBusyUi();
   }
@@ -818,9 +849,13 @@ el.btnMwebSend.addEventListener("click", async () => {
 
 el.btnPegout.addEventListener("click", async () => {
   const address = el.pegoutAddress.value.trim();
+  if (!address) {
+    setError("Enter a peg-out address (ltc1…) in the peg-out address field.");
+    return;
+  }
   const amount_sats = parseLtcToSats(el.pegoutAmount.value);
-  if (!address || amount_sats == null) {
-    setError("Enter peg-out address and amount.");
+  if (amount_sats == null) {
+    setError(amountError("peg-out", el.pegoutAmount.value));
     return;
   }
   if (amount_sats < DUST_LITOSHIS) {
@@ -840,6 +875,7 @@ el.btnPegout.addEventListener("click", async () => {
     await runSync({ quiet: false });
   } catch (e) {
     setError(String(e));
+    el.status.textContent = "";
     sending = false;
     updateBusyUi();
   }

@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use bdk_mweb::keys::{MasterKeyScheme, MasterKeys};
+use bdk_mweb::lip0006_tcp::{BroadcastAck, TcpMwebPeer};
 use bdk_mweb::mweb_sync::{
     FixedHeaderProvider, MwebSyncer, PeerPool, ReadyNotifier, SyncProgress, SyncState,
 };
@@ -24,10 +25,11 @@ use bdk_wallet::{
 
 use crate::dto::{
     CombinedSummary, MwebBroadcastResult, MwebSendRequest, PeginRequest, PeginResult, PegoutRequest,
-    WalletSummary,
+    TxKind, WalletSummary,
 };
 use crate::error::WalletError;
 use crate::meta;
+use crate::mweb_history::{now_ts, MwebHistory, MwebHistoryEntry};
 use crate::network::WalletNetwork;
 use crate::rpc;
 
@@ -40,6 +42,7 @@ pub struct MwebRuntime {
     pub last_synced_height: Option<u32>,
     pub last_status: String,
     pub stale: bool,
+    pub history: MwebHistory,
     secp: Secp256k1<bdk_wallet::bitcoin::secp256k1::All>,
 }
 
@@ -56,6 +59,7 @@ impl MwebRuntime {
         let store = load_store(data_dir)?;
         let sync_state = load_sync_state(data_dir)?;
         let receive_index = load_receive_index(data_dir)?;
+        let history = MwebHistory::load(&meta::mweb_history_path(data_dir))?;
 
         Ok(Self {
             store,
@@ -66,6 +70,7 @@ impl MwebRuntime {
             last_synced_height: None,
             last_status: "MWEB not synced yet".into(),
             stale: true,
+            history,
             secp,
         })
     }
@@ -74,6 +79,7 @@ impl MwebRuntime {
         persist_store(data_dir, &mut self.store)?;
         save_sync_state(data_dir, &self.sync_state)?;
         save_receive_index(data_dir, self.receive_index)?;
+        self.history.save(&meta::mweb_history_path(data_dir))?;
         Ok(())
     }
 
@@ -157,6 +163,7 @@ impl MwebRuntime {
                     result.downloaded,
                     result.found.len()
                 );
+                self.absorb_received_coins();
                 Ok(())
             }
             Err(e) => {
@@ -169,6 +176,30 @@ impl MwebRuntime {
 
     pub fn disconnect_from(&mut self, height: u32) {
         self.store.disconnect_from(height);
+    }
+
+    /// Add history entries for coins in the store that no entry accounts for
+    /// yet (external MWEB receives, or peg-ins found on restore). Coins created
+    /// by our own peg-ins / sends are pre-registered and skipped.
+    fn absorb_received_coins(&mut self) {
+        for coin in self.store.db().unspent_vec() {
+            let id_hex = hex::encode(coin.output_id);
+            if self.history.is_known(&id_hex) {
+                continue;
+            }
+            self.history.record(MwebHistoryEntry {
+                id: id_hex.clone(),
+                kind: if coin.is_pegin {
+                    TxKind::Pegin
+                } else {
+                    TxKind::MwebReceive
+                },
+                net_sats: coin.amount as i64,
+                fee_sats: None,
+                timestamp: now_ts(),
+                output_ids: vec![id_hex],
+            });
+        }
     }
 
     pub fn combined_summary(
@@ -206,6 +237,10 @@ impl MwebRuntime {
     }
 }
 
+/// Remove MWEB store/sync/index files for a from-scratch resync.
+///
+/// Deliberately keeps the history log: entries stay visible across a resync,
+/// and `known_outputs` stops re-found coins from duplicating receive entries.
 pub fn wipe_mweb_files(data_dir: &Path) -> Result<(), WalletError> {
     for path in [
         meta::mweb_db_path(data_dir),
@@ -291,8 +326,10 @@ fn resolve_peers(peers: &[String]) -> Result<Vec<std::net::SocketAddr>, WalletEr
 pub fn pegin(
     wallet: &mut PersistedWallet<Connection>,
     runtime: &mut MwebRuntime,
-    client: &crate::electrum::ElectrumClient,
+    rpc_url: Option<&str>,
+    peers: &[String],
     req: PeginRequest,
+    network: WalletNetwork,
 ) -> Result<PeginResult, WalletError> {
     let mut prepared = wallet
         .prepare_mweb_pegin(
@@ -312,27 +349,93 @@ pub fn pegin(
     }
     let tx =
         extract_prepared_mweb_pegin(&prepared.psbt).map_err(|e| WalletError::Mweb(e.to_string()))?;
-    client
-        .transaction_broadcast(&tx)
-        .map_err(|e| WalletError::Electrum(e.to_string()))?;
+    // A peg-in tx carries MWEB extension data that Electrum servers reject
+    // ("TX decode failed"), so it must take the RPC/P2P path like other MWEB txs.
+    broadcast_mweb_tx(&tx, rpc_url, peers, network)?;
     let tip = wallet.latest_checkpoint().height();
+    let mut output_ids = Vec::new();
     for mut coin in prepared.outputs {
         coin.is_pegin = true;
         coin.block_height = Some(tip);
+        output_ids.push(hex::encode(coin.output_id));
         runtime.store.db_mut().insert(coin);
     }
     runtime.advance_receive_index();
+    let txid = tx.compute_txid().to_string();
+    let fee_sats = req.transparent_fee_sats.saturating_add(req.mweb_fee_sats);
+    // Net matches what BDK will compute for the transparent tx once it syncs:
+    // the peg-in output (amount + MWEB fee) plus the transparent fee leave the
+    // transparent wallet. The entry is deduped against that record by txid.
+    runtime.history.record(MwebHistoryEntry {
+        id: txid.clone(),
+        kind: TxKind::Pegin,
+        net_sats: -((req.amount_sats.saturating_add(fee_sats)) as i64),
+        fee_sats: Some(fee_sats),
+        timestamp: now_ts(),
+        output_ids,
+    });
     Ok(PeginResult {
-        txid: tx.compute_txid().to_string(),
-        fee_sats: req.transparent_fee_sats.saturating_add(req.mweb_fee_sats),
+        txid,
+        fee_sats,
         maturity_blocks: MWEB_PEGIN_MATURITY,
     })
+}
+
+/// Broadcast a transaction that carries MWEB data (peg-in, peg-out, MWEB send).
+/// Electrum servers cannot relay these, so they never take the Electrum path.
+///
+/// Prefers litecoind RPC when configured (authoritative error messages), and
+/// falls back to sending the tx over the LIP-0006 P2P connection otherwise.
+fn broadcast_mweb_tx(
+    tx: &bdk_wallet::bitcoin::Transaction,
+    rpc_url: Option<&str>,
+    peers: &[String],
+    network: WalletNetwork,
+) -> Result<(), WalletError> {
+    if let Some(url) = rpc_url {
+        let hex = serialize_hex(tx);
+        let _ = rpc::send_raw_transaction(url, &hex)?;
+        return Ok(());
+    }
+    let addrs = resolve_peers(peers)?;
+    if addrs.is_empty() {
+        return Err(WalletError::Mweb(
+            "cannot broadcast MWEB transaction: configure a Litecoin RPC URL or reachable MWEB P2P peers in Settings".into(),
+        ));
+    }
+    let bdk_net = network.to_bitcoin_network();
+    let mut last_err = String::from("no MWEB peers reachable");
+    for addr in addrs {
+        match TcpMwebPeer::connect(addr, bdk_net) {
+            Ok(mut peer) => match peer.broadcast_tx(tx) {
+                Ok(BroadcastAck::Confirmed) => {
+                    eprintln!("MWEB broadcast: {addr} accepted the transaction");
+                    return Ok(());
+                }
+                Ok(BroadcastAck::Sent) => {
+                    eprintln!(
+                        "MWEB broadcast: sent to {addr}; acceptance not confirmed before deadline"
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    last_err = format!(
+                        "{addr}: {}",
+                        crate::error::humanize_broadcast_error(&e.to_string())
+                    )
+                }
+            },
+            Err(e) => last_err = format!("{addr}: {e}"),
+        }
+    }
+    Err(WalletError::Mweb(format!("P2P broadcast failed: {last_err}")))
 }
 
 pub fn mweb_send(
     wallet: &PersistedWallet<Connection>,
     runtime: &mut MwebRuntime,
-    rpc_url: &str,
+    rpc_url: Option<&str>,
+    peers: &[String],
     req: MwebSendRequest,
     network: WalletNetwork,
 ) -> Result<MwebBroadcastResult, WalletError> {
@@ -356,16 +459,25 @@ pub fn mweb_send(
     let (tx, change) = wallet
         .sign_and_extract_funded_mweb(&mut funded, &runtime.keys, &runtime.secp)
         .map_err(|e| WalletError::Mweb(e.to_string()))?;
-    let hex = serialize_hex(&tx);
-    let _ = rpc::send_raw_transaction(rpc_url, &hex)?;
+    broadcast_mweb_tx(&tx, rpc_url, peers, network)?;
     let wtxid = tx.compute_wtxid().to_string();
     for id in &spent_ids {
         let _ = runtime.store.db_mut().mark_spent(id);
     }
+    let mut output_ids = Vec::new();
     if let Some(mut change) = change {
         change.block_height = None;
+        output_ids.push(hex::encode(change.output_id));
         runtime.store.db_mut().insert(change);
     }
+    runtime.history.record(MwebHistoryEntry {
+        id: wtxid.clone(),
+        kind: TxKind::MwebSend,
+        net_sats: -((req.amount_sats.saturating_add(req.fee_sats)) as i64),
+        fee_sats: Some(req.fee_sats),
+        timestamp: now_ts(),
+        output_ids,
+    });
     Ok(MwebBroadcastResult {
         wtxid,
         fee_sats: req.fee_sats,
@@ -375,7 +487,8 @@ pub fn mweb_send(
 pub fn pegout(
     wallet: &PersistedWallet<Connection>,
     runtime: &mut MwebRuntime,
-    rpc_url: &str,
+    rpc_url: Option<&str>,
+    peers: &[String],
     req: PegoutRequest,
     network: WalletNetwork,
 ) -> Result<MwebBroadcastResult, WalletError> {
@@ -411,16 +524,25 @@ pub fn pegout(
     let (tx, change) = wallet
         .sign_and_extract_funded_mweb(&mut funded, &runtime.keys, &runtime.secp)
         .map_err(|e| WalletError::Mweb(e.to_string()))?;
-    let hex = serialize_hex(&tx);
-    let _ = rpc::send_raw_transaction(rpc_url, &hex)?;
+    broadcast_mweb_tx(&tx, rpc_url, peers, network)?;
     let wtxid = tx.compute_wtxid().to_string();
     for id in &spent_ids {
         let _ = runtime.store.db_mut().mark_spent(id);
     }
+    let mut output_ids = Vec::new();
     if let Some(mut change) = change {
         change.block_height = None;
+        output_ids.push(hex::encode(change.output_id));
         runtime.store.db_mut().insert(change);
     }
+    runtime.history.record(MwebHistoryEntry {
+        id: wtxid.clone(),
+        kind: TxKind::Pegout,
+        net_sats: -((req.amount_sats.saturating_add(req.fee_sats)) as i64),
+        fee_sats: Some(req.fee_sats),
+        timestamp: now_ts(),
+        output_ids,
+    });
     Ok(MwebBroadcastResult {
         wtxid,
         fee_sats: req.fee_sats,
