@@ -33,6 +33,15 @@ pub struct MwebHistoryEntry {
     /// confirmation height from the coin store).
     #[serde(default)]
     pub output_ids: Vec<String>,
+    /// Hex output ids of our coins this tx spent (used to detect confirmation
+    /// via their disappearance from the network leafset when the tx created no
+    /// coin for us, e.g. an exact peg-out with no change).
+    #[serde(default)]
+    pub input_ids: Vec<String>,
+    /// Block height at which this tx was confirmed, resolved once during sync
+    /// and persisted so it survives an MWEB store wipe/resync.
+    #[serde(default)]
+    pub confirmed_height: Option<u32>,
 }
 
 /// Persisted MWEB activity log.
@@ -92,6 +101,8 @@ mod tests {
             fee_sats: Some(51_000),
             timestamp: 1_700_000_000,
             output_ids: outputs.iter().map(|s| s.to_string()).collect(),
+            input_ids: Vec::new(),
+            confirmed_height: None,
         }
     }
 
@@ -115,6 +126,46 @@ mod tests {
         let loaded = MwebHistory::load(&path).unwrap();
         assert_eq!(loaded.entries, h.entries);
         assert!(loaded.is_known("aa"));
+    }
+
+    #[test]
+    fn legacy_json_without_new_fields_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mweb_history.json");
+        // Pre input_ids / confirmed_height format.
+        let json = r#"{
+            "entries": [{
+                "id": "abc",
+                "kind": "pegout",
+                "net_sats": -5000,
+                "fee_sats": 100,
+                "timestamp": 1700000000,
+                "output_ids": []
+            }],
+            "known_outputs": []
+        }"#;
+        fs::write(&path, json).unwrap();
+        let h = MwebHistory::load(&path).unwrap();
+        assert_eq!(h.entries.len(), 1);
+        assert_eq!(h.entries[0].kind, TxKind::Pegout);
+        assert!(h.entries[0].input_ids.is_empty());
+        assert_eq!(h.entries[0].confirmed_height, None);
+    }
+
+    #[test]
+    fn new_fields_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mweb_history.json");
+        let mut h = MwebHistory::default();
+        let mut e = entry("txid1", &["aa"]);
+        e.input_ids = vec!["bb".into(), "cc".into()];
+        e.confirmed_height = Some(123);
+        h.record(e);
+        h.save(&path).unwrap();
+        let loaded = MwebHistory::load(&path).unwrap();
+        assert_eq!(loaded.entries, h.entries);
+        assert_eq!(loaded.entries[0].input_ids, vec!["bb", "cc"]);
+        assert_eq!(loaded.entries[0].confirmed_height, Some(123));
     }
 
     #[test]

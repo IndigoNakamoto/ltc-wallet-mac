@@ -10,8 +10,10 @@ use std::sync::Arc;
 use bdk_mweb::keys::{MasterKeyScheme, MasterKeys};
 use bdk_mweb::lip0006_tcp::{BroadcastAck, TcpMwebPeer};
 use bdk_mweb::mweb_sync::{
-    FixedHeaderProvider, MwebSyncer, PeerPool, ReadyNotifier, SyncProgress, SyncState,
+    leafset_has_leaf, FixedHeaderProvider, MwebSyncer, PeerPool, ReadyNotifier, SyncProgress,
+    SyncState,
 };
+use bdk_mweb::MwebCoinDatabase;
 use bdk_mweb::tx_builder::CHANGE_ADDRESS_INDEX;
 use bdk_mweb::{AddressBook, DEFAULT_GAP_LIMIT, MWEB_PEGIN_MATURITY};
 use bdk_wallet::bitcoin::consensus::encode::serialize_hex;
@@ -164,6 +166,12 @@ impl MwebRuntime {
                     result.found.len()
                 );
                 self.absorb_received_coins();
+                update_outgoing_confirmations(
+                    &mut self.history,
+                    self.store.db(),
+                    &self.sync_state.leafset,
+                    tip_height,
+                );
                 Ok(())
             }
             Err(e) => {
@@ -176,6 +184,12 @@ impl MwebRuntime {
 
     pub fn disconnect_from(&mut self, height: u32) {
         self.store.disconnect_from(height);
+        // Reorged-out entries must be re-resolved on the new chain.
+        for entry in &mut self.history.entries {
+            if entry.confirmed_height.is_some_and(|h| h >= height) {
+                entry.confirmed_height = None;
+            }
+        }
     }
 
     /// Add history entries for coins in the store that no entry accounts for
@@ -198,6 +212,8 @@ impl MwebRuntime {
                 fee_sats: None,
                 timestamp: now_ts(),
                 output_ids: vec![id_hex],
+                input_ids: Vec::new(),
+                confirmed_height: None,
             });
         }
     }
@@ -234,6 +250,233 @@ impl MwebRuntime {
             mweb_stale: self.stale,
             mweb_status: self.last_status.clone(),
         })
+    }
+}
+
+/// Resolve `confirmed_height` for outgoing MWEB entries (peg-outs and MWEB
+/// sends) after a successful sync at `tip`.
+///
+/// Signals, in order of preference:
+/// 1. A coin the tx created for us (change) carries a `block_height` — exact.
+/// 2. Every spent input's leaf is gone from the network leafset (spends only
+///    clear at inclusion), or the coin vanished from the store entirely after
+///    a wipe/resync — confirmed at or before `tip`, recorded as `tip`.
+/// 3. Legacy entries with nothing to track (recorded before input tracking
+///    existed, no change): resolved at `tip` rather than pending forever; the
+///    inputs already left the balance at broadcast.
+pub(crate) fn update_outgoing_confirmations(
+    history: &mut MwebHistory,
+    db: &MwebCoinDatabase,
+    leafset: &[u8],
+    tip: u32,
+) {
+    for entry in &mut history.entries {
+        if entry.confirmed_height.is_some()
+            || !matches!(entry.kind, TxKind::Pegout | TxKind::MwebSend)
+        {
+            continue;
+        }
+        let mut height: Option<u32> = None;
+        for id_hex in &entry.output_ids {
+            let Some(id) = decode_output_id(id_hex) else { continue };
+            let coin = db.get(&id).or_else(|| db.get_spent(&id));
+            if let Some(h) = coin.and_then(|c| c.block_height) {
+                height = Some(height.map_or(h, |cur| cur.min(h)));
+            }
+        }
+        if height.is_some() {
+            entry.confirmed_height = height;
+            continue;
+        }
+        if entry.input_ids.is_empty() {
+            if entry.output_ids.is_empty() {
+                entry.confirmed_height = Some(tip);
+            }
+            continue;
+        }
+        if leafset.is_empty() {
+            continue;
+        }
+        let all_inputs_gone = entry.input_ids.iter().all(|id_hex| {
+            let Some(id) = decode_output_id(id_hex) else {
+                return false;
+            };
+            match db.get(&id).or_else(|| db.get_spent(&id)) {
+                // Absent after a store wipe: a confirmed-spent coin is never
+                // re-found by sync, while an unconfirmed spend's coin would be.
+                None => true,
+                Some(coin) => coin
+                    .leaf_index
+                    .is_some_and(|leaf| !leafset_has_leaf(leafset, leaf)),
+            }
+        });
+        if all_inputs_gone {
+            entry.confirmed_height = Some(tip);
+        }
+    }
+}
+
+fn decode_output_id(id_hex: &str) -> Option<[u8; 32]> {
+    let bytes = hex::decode(id_hex).ok()?;
+    <[u8; 32]>::try_from(bytes.as_slice()).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bdk_mweb::MwebCoin;
+
+    const TIP: u32 = 200;
+
+    fn coin(id: u8, height: Option<u32>, leaf_index: Option<u64>) -> MwebCoin {
+        MwebCoin {
+            output_id: [id; 32],
+            commitment: [0; 33],
+            amount: 1_000,
+            address_index: 0,
+            blind: [0; 32],
+            shared_secret: [0; 32],
+            spend_key: Some([1; 32]),
+            block_height: height,
+            is_pegin: false,
+            leaf_index,
+        }
+    }
+
+    fn id_hex(id: u8) -> String {
+        hex::encode([id; 32])
+    }
+
+    fn entry(kind: TxKind, outputs: &[u8], inputs: &[u8]) -> MwebHistoryEntry {
+        MwebHistoryEntry {
+            id: "tx".into(),
+            kind,
+            net_sats: -1_000,
+            fee_sats: Some(100),
+            timestamp: 1_700_000_000,
+            output_ids: outputs.iter().map(|&b| id_hex(b)).collect(),
+            input_ids: inputs.iter().map(|&b| id_hex(b)).collect(),
+            confirmed_height: None,
+        }
+    }
+
+    /// MSB-first leafset with the given leaves set (never empty).
+    fn leafset(leaves: &[u64]) -> Vec<u8> {
+        let max = leaves.iter().copied().max().unwrap_or(0);
+        let mut out = vec![0u8; (max / 8 + 1) as usize];
+        for &l in leaves {
+            out[(l / 8) as usize] |= 1 << (7 - (l % 8) as u8);
+        }
+        out
+    }
+
+    fn run(
+        entries: Vec<MwebHistoryEntry>,
+        db: &MwebCoinDatabase,
+        leaves: &[u64],
+    ) -> Vec<Option<u32>> {
+        let mut history = MwebHistory::default();
+        for e in entries {
+            history.record(e);
+        }
+        update_outgoing_confirmations(&mut history, db, &leafset(leaves), TIP);
+        history.entries.iter().map(|e| e.confirmed_height).collect()
+    }
+
+    #[test]
+    fn change_coin_height_gives_exact_confirmation() {
+        let mut db = MwebCoinDatabase::default();
+        db.insert(coin(1, Some(150), Some(7)));
+        // Inputs still in the leafset must not matter once change is dated.
+        db.insert(coin(2, Some(100), Some(3)));
+        db.mark_spent(&[2; 32]);
+        let got = run(vec![entry(TxKind::Pegout, &[1], &[2])], &db, &[3, 7]);
+        assert_eq!(got, vec![Some(150)]);
+    }
+
+    #[test]
+    fn exact_pegout_confirms_when_input_leaves_leave_leafset() {
+        let mut db = MwebCoinDatabase::default();
+        db.insert(coin(2, Some(100), Some(3)));
+        db.mark_spent(&[2; 32]);
+        let got = run(vec![entry(TxKind::Pegout, &[], &[2])], &db, &[9]);
+        assert_eq!(got, vec![Some(TIP)]);
+    }
+
+    #[test]
+    fn exact_pegout_stays_pending_while_input_leaf_present() {
+        let mut db = MwebCoinDatabase::default();
+        db.insert(coin(2, Some(100), Some(3)));
+        db.mark_spent(&[2; 32]);
+        let got = run(vec![entry(TxKind::MwebSend, &[], &[2])], &db, &[3]);
+        assert_eq!(got, vec![None]);
+    }
+
+    #[test]
+    fn input_missing_from_store_counts_as_confirmed_spent() {
+        // After an MWEB wipe/resync a confirmed-spent coin is never re-found.
+        let db = MwebCoinDatabase::default();
+        let got = run(vec![entry(TxKind::Pegout, &[], &[2])], &db, &[9]);
+        assert_eq!(got, vec![Some(TIP)]);
+    }
+
+    #[test]
+    fn input_without_leaf_index_is_unverifiable() {
+        let mut db = MwebCoinDatabase::default();
+        db.insert(coin(2, None, None));
+        db.mark_spent(&[2; 32]);
+        let got = run(vec![entry(TxKind::Pegout, &[], &[2])], &db, &[9]);
+        assert_eq!(got, vec![None]);
+    }
+
+    #[test]
+    fn undated_change_with_present_inputs_stays_pending() {
+        let mut db = MwebCoinDatabase::default();
+        db.insert(coin(1, None, None));
+        db.insert(coin(2, Some(100), Some(3)));
+        db.mark_spent(&[2; 32]);
+        let got = run(vec![entry(TxKind::Pegout, &[1], &[2])], &db, &[3]);
+        assert_eq!(got, vec![None]);
+    }
+
+    #[test]
+    fn legacy_trackless_entry_resolves_at_tip() {
+        let db = MwebCoinDatabase::default();
+        let got = run(vec![entry(TxKind::Pegout, &[], &[])], &db, &[0]);
+        assert_eq!(got, vec![Some(TIP)]);
+    }
+
+    #[test]
+    fn non_outgoing_kinds_are_untouched() {
+        let db = MwebCoinDatabase::default();
+        let got = run(
+            vec![
+                entry(TxKind::Pegin, &[], &[]),
+                entry(TxKind::MwebReceive, &[], &[]),
+            ],
+            &db,
+            &[0],
+        );
+        assert_eq!(got, vec![None, None]);
+    }
+
+    #[test]
+    fn already_resolved_entry_is_not_rewritten() {
+        let mut db = MwebCoinDatabase::default();
+        db.insert(coin(1, Some(150), Some(7)));
+        let mut e = entry(TxKind::Pegout, &[1], &[]);
+        e.confirmed_height = Some(50);
+        let got = run(vec![e], &db, &[7]);
+        assert_eq!(got, vec![Some(50)]);
+    }
+
+    #[test]
+    fn empty_leafset_defers_input_based_resolution() {
+        let mut history = MwebHistory::default();
+        history.record(entry(TxKind::Pegout, &[], &[2]));
+        let db = MwebCoinDatabase::default();
+        update_outgoing_confirmations(&mut history, &db, &[], TIP);
+        assert_eq!(history.entries[0].confirmed_height, None);
     }
 }
 
@@ -373,6 +616,8 @@ pub fn pegin(
         fee_sats: Some(fee_sats),
         timestamp: now_ts(),
         output_ids,
+        input_ids: Vec::new(),
+        confirmed_height: None,
     });
     Ok(PeginResult {
         txid,
@@ -477,6 +722,8 @@ pub fn mweb_send(
         fee_sats: Some(req.fee_sats),
         timestamp: now_ts(),
         output_ids,
+        input_ids: spent_ids.iter().map(hex::encode).collect(),
+        confirmed_height: None,
     });
     Ok(MwebBroadcastResult {
         wtxid,
@@ -542,6 +789,8 @@ pub fn pegout(
         fee_sats: Some(req.fee_sats),
         timestamp: now_ts(),
         output_ids,
+        input_ids: spent_ids.iter().map(hex::encode).collect(),
+        confirmed_height: None,
     });
     Ok(MwebBroadcastResult {
         wtxid,

@@ -913,9 +913,11 @@ fn merge_mweb_history(records: &mut Vec<TxRecord>, mweb: &MwebRuntime, tip: u32)
             records[i].kind = entry.kind;
             continue;
         }
-        // Derive confirmation height from the coins this tx created for us
-        // (received coins, or the change coin of an outgoing tx).
-        let mut height: Option<u32> = None;
+        // Prefer the height resolved and persisted at sync time (covers
+        // peg-outs with no change coin, and survives an MWEB resync).
+        // Fall back to the coins this tx created for us (received coins,
+        // or the change coin of an outgoing tx).
+        let mut height: Option<u32> = entry.confirmed_height;
         for id_hex in &entry.output_ids {
             let Ok(bytes) = hex::decode(id_hex) else { continue };
             let Ok(id) = <[u8; 32]>::try_from(bytes.as_slice()) else {
@@ -944,6 +946,49 @@ fn merge_mweb_history(records: &mut Vec<TxRecord>, mweb: &MwebRuntime, tip: u32)
             timestamp: Some(entry.timestamp),
             kind: entry.kind,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mweb_history::MwebHistoryEntry;
+
+    #[test]
+    fn merge_uses_persisted_confirmed_height() {
+        let dir = tempfile::tempdir().unwrap();
+        let mnemonic =
+            parse_mnemonic(&descriptors::generate_mnemonic().unwrap()).unwrap();
+        let mut mweb =
+            MwebRuntime::open(dir.path(), &mnemonic, WalletNetwork::Testnet).unwrap();
+        mweb.history.record(MwebHistoryEntry {
+            id: "wtxid1".into(),
+            kind: TxKind::Pegout,
+            net_sats: -5_000,
+            fee_sats: Some(100),
+            timestamp: 1_700_000_000,
+            output_ids: Vec::new(),
+            input_ids: Vec::new(),
+            confirmed_height: Some(90),
+        });
+        mweb.history.record(MwebHistoryEntry {
+            id: "wtxid2".into(),
+            kind: TxKind::Pegout,
+            net_sats: -5_000,
+            fee_sats: Some(100),
+            timestamp: 1_700_000_000,
+            output_ids: Vec::new(),
+            input_ids: Vec::new(),
+            confirmed_height: None,
+        });
+        let mut records = Vec::new();
+        merge_mweb_history(&mut records, &mweb, 100);
+        let confirmed = records.iter().find(|r| r.txid == "wtxid1").unwrap();
+        assert_eq!(confirmed.height, Some(90));
+        assert_eq!(confirmed.confirmations, 11);
+        let pending = records.iter().find(|r| r.txid == "wtxid2").unwrap();
+        assert_eq!(pending.height, None);
+        assert_eq!(pending.confirmations, 0);
     }
 }
 
