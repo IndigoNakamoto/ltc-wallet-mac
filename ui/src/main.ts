@@ -84,10 +84,53 @@ type Phase =
   | "unlock"
   | "migrate";
 
+const PHASE_LABELS: Record<Phase, string> = {
+  boot: "Starting…",
+  onboarding: "Set up your wallet",
+  mnemonic: "Back up your phrase",
+  ready: "Ready",
+  fatal: "Wallet data problem",
+  unlock: "Locked",
+  migrate: "Encryption required",
+};
+
+const VIEWS = ["balance", "receive", "send", "private", "history", "settings"] as const;
+type View = (typeof VIEWS)[number];
+
+const VIEW_TITLES: Record<View, string> = {
+  balance: "Balance",
+  receive: "Receive",
+  send: "Send",
+  private: "Private",
+  history: "History",
+  settings: "Settings",
+};
+
+type StatusKind = "info" | "success" | "error";
+type SyncState = "idle" | "ok" | "error";
+
+const SYNC_TITLES: Record<SyncState, string> = {
+  idle: "Not synced yet",
+  ok: "Synced",
+  error: "Last sync failed",
+};
+
+type ThemePref = "auto" | "light" | "dark";
+
+const THEME_KEY = "ltc-theme";
+const THEME_ORDER: ThemePref[] = ["auto", "light", "dark"];
+
 const DUST_LITOSHIS = 2940;
 const AUTO_SYNC_MS = 60_000;
+const QR_CSS_SIZE = 176;
+
+const SVG_ARROW_IN =
+  '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v13"/><path d="m6 13 6 6 6-6"/></svg>';
+const SVG_ARROW_OUT =
+  '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6"/><path d="m6 11 6-6 6 6"/></svg>';
 
 const el = {
+  authShell: document.querySelector<HTMLElement>("#auth-shell")!,
   phase: document.querySelector<HTMLElement>("#phase")!,
   error: document.querySelector<HTMLElement>("#error")!,
   fatal: document.querySelector<HTMLElement>("#fatal")!,
@@ -97,13 +140,18 @@ const el = {
   mnemonic: document.querySelector<HTMLElement>("#mnemonic")!,
   ready: document.querySelector<HTMLElement>("#ready")!,
   mnemonicText: document.querySelector<HTMLElement>("#mnemonic-text")!,
+  viewTitle: document.querySelector<HTMLElement>("#view-title")!,
   networkBadge: document.querySelector<HTMLElement>("#network-badge")!,
+  syncDot: document.querySelector<HTMLElement>("#sync-dot")!,
+  syncLabel: document.querySelector<HTMLElement>("#sync-label")!,
   balanceTotal: document.querySelector<HTMLElement>("#balance-total")!,
   balanceSats: document.querySelector<HTMLElement>("#balance-sats")!,
   balanceConfirmed: document.querySelector<HTMLElement>("#balance-confirmed")!,
   balanceMweb: document.querySelector<HTMLElement>("#balance-mweb")!,
   balanceTip: document.querySelector<HTMLElement>("#balance-tip")!,
   balancePending: document.querySelector<HTMLElement>("#balance-pending")!,
+  statMweb: document.querySelector<HTMLElement>("#stat-mweb")!,
+  mwebStatusCard: document.querySelector<HTMLElement>("#mweb-status-card")!,
   mwebStatus: document.querySelector<HTMLElement>("#mweb-status")!,
   mwebProgress: document.querySelector<HTMLElement>("#mweb-progress")!,
   mwebProgressFill: document.querySelector<HTMLElement>("#mweb-progress-fill")!,
@@ -114,7 +162,10 @@ const el = {
   mwebQr: document.querySelector<HTMLCanvasElement>("#mweb-qr")!,
   mwebAddress: document.querySelector<HTMLElement>("#mweb-address")!,
   mwebActions: document.querySelector<HTMLElement>("#mweb-actions")!,
+  toast: document.querySelector<HTMLElement>("#toast")!,
   status: document.querySelector<HTMLElement>("#status")!,
+  btnToastClose: document.querySelector<HTMLButtonElement>("#btn-toast-close")!,
+  btnTheme: document.querySelector<HTMLButtonElement>("#btn-theme")!,
   lastTxid: document.querySelector<HTMLElement>("#last-txid")!,
   txList: document.querySelector<HTMLUListElement>("#tx-list")!,
   txEmpty: document.querySelector<HTMLElement>("#tx-empty")!,
@@ -157,12 +208,25 @@ const el = {
   btnPegout: document.querySelector<HTMLButtonElement>("#btn-pegout")!,
 };
 
+const views = Object.fromEntries(
+  VIEWS.map((view) => [
+    view,
+    {
+      nav: document.querySelector<HTMLButtonElement>(`#nav-${view}`)!,
+      pane: document.querySelector<HTMLElement>(`#view-${view}`)!,
+    },
+  ]),
+) as Record<View, { nav: HTMLButtonElement; pane: HTMLElement }>;
+
 let syncing = false;
 let sending = false;
 let currentPhase: Phase = "boot";
+let currentView: View = "balance";
+let syncState: SyncState = "idle";
 let lastTxid: string | null = null;
 let autoSyncTimer: number | null = null;
 let mwebProgressTimer: number | null = null;
+let statusTimer: number | null = null;
 
 function formatLtc(sats: number): string {
   const whole = Math.trunc(sats / 100_000_000);
@@ -203,7 +267,8 @@ function amountError(field: string, rawValue: string): string {
 
 function setPhase(next: Phase) {
   currentPhase = next;
-  el.phase.textContent = next;
+  el.phase.textContent = PHASE_LABELS[next];
+  el.authShell.hidden = next === "ready";
   el.fatal.hidden = next !== "fatal";
   el.unlock.hidden = next !== "unlock";
   el.migrate.hidden = next !== "migrate";
@@ -214,14 +279,102 @@ function setPhase(next: Phase) {
   else stopAutoSync();
 }
 
+function setView(next: View) {
+  currentView = next;
+  el.viewTitle.textContent = VIEW_TITLES[next];
+  for (const view of VIEWS) {
+    const { nav, pane } = views[view];
+    const active = view === next;
+    pane.hidden = !active;
+    nav.setAttribute("aria-selected", String(active));
+  }
+}
+
+for (const view of VIEWS) {
+  views[view].nav.addEventListener("click", () => setView(view));
+}
+
+function setStatus(message: string | null, kind: StatusKind = "info") {
+  if (statusTimer != null) {
+    clearTimeout(statusTimer);
+    statusTimer = null;
+  }
+  if (!message) {
+    el.toast.hidden = true;
+    el.status.textContent = "";
+    return;
+  }
+  el.status.textContent = message;
+  el.status.title = message;
+  el.toast.dataset.kind = kind;
+  el.toast.hidden = false;
+  statusTimer = window.setTimeout(
+    () => {
+      el.toast.hidden = true;
+      statusTimer = null;
+    },
+    kind === "error" ? 9_000 : 4_000,
+  );
+}
+
+el.btnToastClose.addEventListener("click", () => setStatus(null));
+
 function setError(message: string | null) {
   if (!message) {
     el.error.hidden = true;
     el.error.textContent = "";
     return;
   }
+  // Inside the app shell there is no room for a persistent banner — use the toast.
+  if (currentPhase === "ready") {
+    el.error.hidden = true;
+    el.error.textContent = "";
+    setStatus(message, "error");
+    return;
+  }
   el.error.hidden = false;
   el.error.textContent = message;
+}
+
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+
+function readThemePref(): ThemePref {
+  const raw = document.documentElement.dataset.themePref;
+  return raw === "light" || raw === "dark" ? raw : "auto";
+}
+
+function applyTheme(pref: ThemePref) {
+  const dark = pref === "dark" || (pref === "auto" && darkQuery.matches);
+  const root = document.documentElement;
+  root.dataset.theme = dark ? "dark" : "light";
+  root.dataset.themePref = pref;
+  try {
+    localStorage.setItem(THEME_KEY, pref);
+  } catch {
+    /* localStorage unavailable */
+  }
+  el.btnTheme.title = `Theme: ${pref}`;
+  el.btnTheme.setAttribute("aria-label", `Theme: ${pref}. Click to change.`);
+}
+
+darkQuery.addEventListener("change", () => {
+  if (readThemePref() === "auto") applyTheme("auto");
+});
+
+el.btnTheme.addEventListener("click", () => {
+  const next = THEME_ORDER[(THEME_ORDER.indexOf(readThemePref()) + 1) % THEME_ORDER.length];
+  applyTheme(next);
+});
+
+function flashLabel(btn: HTMLButtonElement, text: string) {
+  const label = btn.querySelector<HTMLElement>(".btn-label");
+  if (!label) return;
+  const original = label.dataset.original ?? label.textContent ?? "";
+  label.dataset.original = original;
+  label.textContent = text;
+  window.setTimeout(() => {
+    label.textContent = label.dataset.original ?? original;
+  }, 1_400);
 }
 
 function updateBusyUi() {
@@ -241,8 +394,22 @@ function updateBusyUi() {
   el.btnPegout.disabled = busy;
   el.btnResyncMweb.disabled = busy;
 
-  if (sending) el.status.textContent = "sending…";
-  else if (syncing) el.status.textContent = "syncing…";
+  el.syncLabel.textContent = sending ? "Sending…" : syncing ? "Syncing…" : "Sync";
+  el.syncDot.dataset.state = busy ? "busy" : syncState;
+  el.syncDot.title = busy
+    ? sending
+      ? "Sending"
+      : "Syncing"
+    : SYNC_TITLES[syncState];
+}
+
+function setMwebVisible(visible: boolean) {
+  el.statMweb.hidden = !visible;
+  el.mwebStatusCard.hidden = !visible;
+  el.mwebActions.hidden = !visible;
+  el.mwebReceive.hidden = !visible;
+  views.private.nav.hidden = !visible;
+  if (!visible && currentView === "private") setView("balance");
 }
 
 function paymentUri(address: string): string {
@@ -257,25 +424,46 @@ async function renderQr(canvas: HTMLCanvasElement, address: string) {
     ctx?.clearRect(0, 0, canvas.width, canvas.height);
     return;
   }
+  // Render at device resolution, then pin the CSS box so it stays crisp on Retina.
+  const dpr = Math.min(3, Math.max(1, Math.round(window.devicePixelRatio || 1)));
   try {
     await QRCode.toCanvas(canvas, paymentUri(address), {
       errorCorrectionLevel: "M",
       margin: 2,
-      width: 180,
+      width: QR_CSS_SIZE * dpr,
       color: { dark: "#000000", light: "#ffffff" },
     });
+    canvas.style.width = `${QR_CSS_SIZE}px`;
+    canvas.style.height = `${QR_CSS_SIZE}px`;
   } catch (e) {
     ctx?.clearRect(0, 0, canvas.width, canvas.height);
     setError(`QR render failed: ${e}`);
   }
 }
 
+function renderMnemonic(mnemonic: string) {
+  el.mnemonicText.textContent = "";
+  const words = mnemonic.trim().split(/\s+/).filter(Boolean);
+  words.forEach((word, i) => {
+    const chip = document.createElement("div");
+    chip.className = "mnemonic-word";
+    const index = document.createElement("span");
+    index.className = "mnemonic-index";
+    index.textContent = String(i + 1);
+    const text = document.createElement("span");
+    text.textContent = word;
+    chip.append(index, text);
+    el.mnemonicText.appendChild(chip);
+  });
+}
+
 function renderSummary(s: WalletSummary) {
   el.networkBadge.textContent = s.network;
+  el.balanceTotal.classList.remove("skeleton");
   el.balanceTotal.textContent = formatLtc(s.total_sats);
   el.balanceSats.textContent = formatLitoshis(s.total_sats);
-  el.balanceConfirmed.textContent = `Confirmed: ${formatLtc(s.confirmed_sats)}`;
-  el.balanceTip.textContent = `Tip height: ${s.tip_height}`;
+  el.balanceConfirmed.textContent = formatLtc(s.confirmed_sats);
+  el.balanceTip.textContent = s.tip_height.toLocaleString("en-US");
   el.address.textContent = s.receive_address;
   void renderQr(el.receiveQr, s.receive_address);
 
@@ -300,8 +488,8 @@ function renderSummary(s: WalletSummary) {
 
 function renderCombined(c: CombinedSummary) {
   renderSummary(c.transparent);
-  el.balanceMweb.hidden = false;
-  let mwebText = `Private (MWEB): ${formatLtc(c.mweb_total_sats)}`;
+  setMwebVisible(true);
+  let mwebText = formatLtc(c.mweb_total_sats);
   if (c.mweb_immature_sats > 0) {
     mwebText += ` · maturing ${formatLtc(c.mweb_immature_sats)}`;
   }
@@ -313,8 +501,6 @@ function renderCombined(c: CombinedSummary) {
   el.balanceMweb.textContent = mwebText;
   el.mwebStatus.hidden = false;
   el.mwebStatus.textContent = c.mweb_status;
-  el.mwebActions.hidden = false;
-  el.mwebReceive.hidden = false;
   if (c.mweb_receive_address) {
     el.mwebAddress.textContent = c.mweb_receive_address;
     void renderQr(el.mwebQr, c.mweb_receive_address);
@@ -331,21 +517,61 @@ function renderLastTxid() {
   el.lastTxid.textContent = `Last txid: ${lastTxid}`;
 }
 
+function formatTxTime(timestamp: number | null): string {
+  if (timestamp == null) return "";
+  // Backend reports seconds; tolerate millisecond timestamps too.
+  const date = new Date(timestamp > 1e12 ? timestamp : timestamp * 1_000);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function renderHistory(txs: TxRecord[]) {
   el.txList.innerHTML = "";
   el.txEmpty.hidden = txs.length > 0;
   for (const tx of txs) {
-    const li = document.createElement("li");
     const dir = tx.net_sats >= 0 ? "in" : "out";
-    const conf =
-      tx.confirmations === 0 ? "pending" : `${tx.confirmations} conf`;
-    const kindLabel = TX_KIND_LABELS[tx.kind] ?? "";
-    const confText = kindLabel ? `${kindLabel} · ${conf}` : conf;
-    const short = `${tx.txid.slice(0, 8)}…${tx.txid.slice(-8)}`;
-    li.innerHTML = `<span class="tx-dir ${dir}">${dir}</span>
-      <span class="tx-amt">${formatLtc(Math.abs(tx.net_sats))}</span>
-      <span class="tx-conf muted">${confText}</span>
-      <span class="tx-id mono muted">${short}</span>`;
+
+    const icon = document.createElement("span");
+    icon.className = `tx-icon ${dir}`;
+    icon.innerHTML = dir === "in" ? SVG_ARROW_IN : SVG_ARROW_OUT;
+
+    const amount = document.createElement("span");
+    amount.className = dir === "in" ? "tx-amt in" : "tx-amt";
+    amount.textContent = `${dir === "in" ? "+" : "−"}${formatLtc(Math.abs(tx.net_sats))}`;
+
+    const meta = document.createElement("span");
+    meta.className = "tx-meta";
+    meta.textContent = [TX_KIND_LABELS[tx.kind], formatTxTime(tx.timestamp)]
+      .filter(Boolean)
+      .join(" · ");
+    meta.hidden = meta.textContent === "";
+
+    const main = document.createElement("div");
+    main.className = "tx-main";
+    main.append(amount, meta);
+
+    const pill = document.createElement("span");
+    pill.className = tx.confirmations === 0 ? "pill pending" : "pill";
+    pill.textContent =
+      tx.confirmations === 0 ? "pending" : `${tx.confirmations.toLocaleString("en-US")} conf`;
+
+    const txid = document.createElement("span");
+    txid.className = "tx-id";
+    txid.textContent = `${tx.txid.slice(0, 8)}…${tx.txid.slice(-8)}`;
+    txid.title = tx.txid;
+
+    const side = document.createElement("div");
+    side.className = "tx-side";
+    side.append(pill, txid);
+
+    const li = document.createElement("li");
+    li.className = "tx-row";
+    li.append(icon, main, side);
     el.txList.appendChild(li);
   }
 }
@@ -367,6 +593,7 @@ async function refreshCombined() {
     try {
       const s = await invoke<WalletSummary>("get_summary");
       renderSummary(s);
+      setMwebVisible(false);
     } catch {
       /* ignore */
     }
@@ -442,6 +669,8 @@ function requireMatchingPassphrases(a: string, b: string): string | null {
 async function boot() {
   setPhase("boot");
   setError(null);
+  applyTheme(readThemePref());
+  updateBusyUi();
   try {
     const exists = await invoke<boolean>("wallet_exists");
     if (!exists) {
@@ -469,6 +698,7 @@ async function enterReady() {
   const s = await invoke<WalletSummary>("load_wallet");
   renderSummary(s);
   setPhase("ready");
+  setView("balance");
   await refreshCombined();
   await refreshHistory();
   await loadSettings();
@@ -482,7 +712,7 @@ async function wipeAndOnboard() {
   renderLastTxid();
   el.txList.innerHTML = "";
   setPhase("onboarding");
-  el.status.textContent = "wallet data reset — create or restore";
+  setStatus("Wallet data reset — create or restore a wallet.");
 }
 
 el.btnWipe.addEventListener("click", () => void wipeAndOnboard().catch((e) => setError(String(e))));
@@ -536,15 +766,18 @@ async function runSync(opts: { quiet: boolean }): Promise<boolean> {
     renderSummary(result.summary);
     await refreshCombined();
     await refreshHistory();
-    el.status.textContent = `synced (+${result.new_txs} txs)`;
+    syncState = "ok";
+    setStatus(
+      result.new_txs > 0
+        ? `Synced · ${result.new_txs} new transaction${result.new_txs === 1 ? "" : "s"}`
+        : "Synced",
+      "success",
+    );
     return true;
   } catch (e) {
-    if (opts.quiet) {
-      el.status.textContent = `auto-sync failed: ${e}`;
-    } else {
-      setError(String(e));
-      el.status.textContent = "";
-    }
+    syncState = "error";
+    if (opts.quiet) setStatus(`Auto-sync failed: ${e}`, "error");
+    else setError(String(e));
     return false;
   } finally {
     stopMwebProgressPolling();
@@ -572,12 +805,12 @@ el.btnCreate.addEventListener("click", async () => {
       req: { network: "mainnet" },
       passphrase,
     });
-    el.mnemonicText.textContent = resp.mnemonic;
+    renderMnemonic(resp.mnemonic);
     renderSummary(resp.summary);
     el.onboardPassphrase.value = "";
     el.onboardPassphrase2.value = "";
     setPhase("mnemonic");
-    el.status.textContent = "";
+    setStatus(null);
   } catch (e) {
     setError(String(e));
   } finally {
@@ -613,7 +846,9 @@ el.btnRestore.addEventListener("click", async () => {
     renderSummary(s);
     el.onboardPassphrase.value = "";
     el.onboardPassphrase2.value = "";
+    el.restoreMnemonic.value = "";
     setPhase("ready");
+    setView("balance");
     syncing = false;
     updateBusyUi();
     await loadSettings();
@@ -628,6 +863,7 @@ el.btnRestore.addEventListener("click", async () => {
 el.btnMnemonicDone.addEventListener("click", () => {
   el.mnemonicText.textContent = "";
   setPhase("ready");
+  setView("balance");
   void loadSettings();
   void runSync({ quiet: false });
 });
@@ -645,7 +881,7 @@ el.btnAddress.addEventListener("click", async () => {
     const address = await invoke<string>("get_receive_address");
     el.address.textContent = address;
     await renderQr(el.receiveQr, address);
-    el.status.textContent = "receive address refreshed";
+    setStatus("New receive address generated.", "success");
   } catch (e) {
     setError(String(e));
   } finally {
@@ -657,14 +893,14 @@ el.btnAddress.addEventListener("click", async () => {
 el.btnCopy.addEventListener("click", async () => {
   const address = el.address.textContent?.trim() ?? "";
   if (!address) {
-    el.status.textContent = "no address to copy";
+    setStatus("No address to copy yet.", "error");
     return;
   }
   try {
     await navigator.clipboard.writeText(address);
-    el.status.textContent = "address copied";
+    flashLabel(el.btnCopy, "Copied");
   } catch {
-    el.status.textContent = "copy failed — select the address manually";
+    setStatus("Copy failed — select the address manually.", "error");
   }
 });
 
@@ -673,9 +909,9 @@ el.btnCopyMweb.addEventListener("click", async () => {
   if (!address) return;
   try {
     await navigator.clipboard.writeText(address);
-    el.status.textContent = "MWEB address copied";
+    flashLabel(el.btnCopyMweb, "Copied");
   } catch {
-    el.status.textContent = "copy failed";
+    setStatus("Copy failed — select the address manually.", "error");
   }
 });
 
@@ -688,15 +924,14 @@ el.btnResyncMweb.addEventListener("click", async () => {
   syncing = true;
   setError(null);
   updateBusyUi();
-  el.status.textContent = "resyncing MWEB from scratch…";
+  setStatus("Resyncing MWEB from scratch…");
   startMwebProgressPolling();
   try {
     await invoke("resync_mweb");
     await refreshCombined();
-    el.status.textContent = "MWEB resynced";
+    setStatus("MWEB resynced.", "success");
   } catch (e) {
     setError(String(e));
-    el.status.textContent = "";
   } finally {
     stopMwebProgressPolling();
     syncing = false;
@@ -748,16 +983,15 @@ el.sendForm.addEventListener("submit", async (event) => {
     });
     lastTxid = result.txid;
     renderLastTxid();
-    el.status.textContent = `broadcast (${result.fee_sats} litoshis fee) — syncing…`;
+    setStatus(`Broadcast · fee ${result.fee_sats} litoshis — syncing…`);
     sending = false;
     updateBusyUi();
     const ok = await runSync({ quiet: false });
     if (ok) {
-      el.status.textContent = `sent · fee ${result.fee_sats} litoshis`;
+      setStatus(`Sent · fee ${result.fee_sats} litoshis`, "success");
     }
   } catch (e) {
     setError(String(e));
-    el.status.textContent = "";
     sending = false;
     updateBusyUi();
   }
@@ -776,7 +1010,7 @@ el.btnSaveSettings.addEventListener("click", async () => {
           .filter(Boolean),
       },
     });
-    el.status.textContent = "settings saved";
+    setStatus("Settings saved.", "success");
   } catch (e) {
     setError(String(e));
   }
@@ -786,7 +1020,7 @@ el.btnLock.addEventListener("click", async () => {
   await invoke("lock_wallet");
   stopAutoSync();
   setPhase("unlock");
-  el.status.textContent = "wallet locked";
+  setStatus("Wallet locked.");
 });
 
 el.btnPegin.addEventListener("click", async () => {
@@ -804,13 +1038,15 @@ el.btnPegin.addEventListener("click", async () => {
     });
     lastTxid = result.txid;
     renderLastTxid();
-    el.status.textContent = `peg-in broadcast — wait ${result.maturity_blocks} blocks to mature`;
+    setStatus(
+      `Peg-in broadcast — matures in ${result.maturity_blocks} blocks.`,
+      "success",
+    );
     sending = false;
     updateBusyUi();
     await runSync({ quiet: false });
   } catch (e) {
     setError(String(e));
-    el.status.textContent = "";
     sending = false;
     updateBusyUi();
   }
@@ -834,14 +1070,13 @@ el.btnMwebSend.addEventListener("click", async () => {
     const result = await invoke<{ wtxid: string; fee_sats: number }>("mweb_send_ltc", {
       req: { address, amount_sats },
     });
-    el.status.textContent = `MWEB sent · wtxid ${result.wtxid}`;
+    setStatus(`MWEB sent · wtxid ${result.wtxid}`, "success");
     sending = false;
     updateBusyUi();
     await refreshCombined();
     await refreshHistory();
   } catch (e) {
     setError(String(e));
-    el.status.textContent = "";
     sending = false;
     updateBusyUi();
   }
@@ -869,13 +1104,12 @@ el.btnPegout.addEventListener("click", async () => {
     const result = await invoke<{ wtxid: string }>("pegout_ltc", {
       req: { address, amount_sats },
     });
-    el.status.textContent = `peg-out broadcast · wtxid ${result.wtxid}`;
+    setStatus(`Peg-out broadcast · wtxid ${result.wtxid}`, "success");
     sending = false;
     updateBusyUi();
     await runSync({ quiet: false });
   } catch (e) {
     setError(String(e));
-    el.status.textContent = "";
     sending = false;
     updateBusyUi();
   }

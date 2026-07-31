@@ -1,238 +1,555 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark" data-theme-pref="auto">
   <head>
     <meta charset="UTF-8" />
-    <link rel="stylesheet" href="/src/styles.css" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>LTC Wallet</title>
+    <script>
+      // Resolve the theme before first paint so the window never flashes the wrong surface.
+      (function () {
+        try {
+          var pref = localStorage.getItem("ltc-theme") || "auto";
+          var dark =
+            pref === "dark" ||
+            (pref === "auto" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.dataset.theme = dark ? "dark" : "light";
+          document.documentElement.dataset.themePref = pref;
+        } catch (e) {
+          /* localStorage unavailable */
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="/src/styles.css" />
     <script type="module" src="/src/main.ts" defer></script>
   </head>
   <body>
-    <main class="container">
-      <h1>LTC Wallet</h1>
-      <p class="phase" id="phase">booting…</p>
-      <p class="error" id="error" hidden></p>
-
-      <section id="fatal" class="panel" hidden>
-        <h2>Wallet data problem</h2>
-        <p>
-          Local wallet files exist but the mnemonic secret is missing or locked.
-          If you still have your backup phrase, reset and restore. Otherwise reset and create a new
-          wallet (any funds on the old addresses need the old mnemonic).
-        </p>
-        <div class="row">
-          <button type="button" id="btn-wipe">Reset wallet data</button>
+    <div class="auth" id="auth-shell">
+      <div class="auth-inner">
+        <div class="brand brand-lg">
+          <span class="brand-mark" aria-hidden="true">Ł</span>
+          <div class="brand-text">
+            <h1>LTC Wallet</h1>
+            <p class="phase" id="phase">Starting…</p>
+          </div>
         </div>
-      </section>
 
-      <section id="unlock" class="panel" hidden>
-        <h2>Unlock wallet</h2>
-        <p>Enter your passphrase to decrypt the mnemonic.</p>
-        <p class="muted">
-          Forgot passphrase? The only recovery is reset + restore from your mnemonic backup.
-        </p>
-        <label>
-          Passphrase
-          <input id="unlock-passphrase" type="password" autocomplete="current-password" />
-        </label>
-        <div class="row">
-          <button type="button" id="btn-unlock">Unlock</button>
-          <button type="button" id="btn-wipe-unlock" class="secondary">Reset wallet data</button>
+        <p class="error" id="error" hidden></p>
+
+        <section id="fatal" class="card" hidden>
+          <h2>Wallet data problem</h2>
+          <p class="lede">
+            Local wallet files exist but the mnemonic secret is missing or locked. If you still have
+            your backup phrase, reset and restore. Otherwise reset and create a new wallet — funds on
+            the old addresses need the old mnemonic.
+          </p>
+          <div class="row">
+            <button type="button" id="btn-wipe" class="btn btn-danger">Reset wallet data</button>
+          </div>
+        </section>
+
+        <section id="unlock" class="card" hidden>
+          <h2>Unlock wallet</h2>
+          <p class="lede">Enter your passphrase to decrypt the mnemonic.</p>
+          <label class="field">
+            <span class="field-label">Passphrase</span>
+            <input id="unlock-passphrase" type="password" autocomplete="current-password" />
+          </label>
+          <div class="row">
+            <button type="button" id="btn-unlock" class="btn btn-primary">Unlock</button>
+            <button type="button" id="btn-wipe-unlock" class="btn btn-ghost">Reset wallet data</button>
+          </div>
+          <p class="hint">
+            Forgot your passphrase? The only recovery is reset plus restore from your mnemonic backup.
+          </p>
+        </section>
+
+        <section id="migrate" class="card" hidden>
+          <h2>Encrypt wallet</h2>
+          <p class="lede">
+            Your mnemonic is currently stored in plaintext. Choose a passphrase to encrypt it at rest.
+          </p>
+          <div class="field-grid">
+            <label class="field">
+              <span class="field-label">Passphrase</span>
+              <input id="migrate-passphrase" type="password" autocomplete="new-password" />
+            </label>
+            <label class="field">
+              <span class="field-label">Confirm passphrase</span>
+              <input id="migrate-passphrase2" type="password" autocomplete="new-password" />
+            </label>
+          </div>
+          <div class="row">
+            <button type="button" id="btn-migrate" class="btn btn-primary">Encrypt and continue</button>
+          </div>
+        </section>
+
+        <section id="onboarding" hidden>
+          <div class="card">
+            <h2>Create a wallet</h2>
+            <p class="lede">
+              A new mainnet wallet. The passphrase encrypts your mnemonic on this machine.
+            </p>
+            <div class="field-grid">
+              <label class="field">
+                <span class="field-label">Passphrase</span>
+                <input id="onboard-passphrase" type="password" autocomplete="new-password" />
+              </label>
+              <label class="field">
+                <span class="field-label">Confirm passphrase</span>
+                <input id="onboard-passphrase2" type="password" autocomplete="new-password" />
+              </label>
+            </div>
+            <div class="row">
+              <button type="button" id="btn-create" class="btn btn-primary">Create wallet</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Restore from backup</h2>
+            <p class="lede">
+              Paste your recovery phrase. It is encrypted with the passphrase above.
+            </p>
+            <label class="field">
+              <span class="field-label">Mnemonic</span>
+              <textarea id="restore-mnemonic" rows="3" class="mono" placeholder="twelve words…"></textarea>
+            </label>
+            <div class="row">
+              <button type="button" id="btn-restore" class="btn btn-secondary">Restore wallet</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="mnemonic" class="card" hidden>
+          <h2>Back up your recovery phrase</h2>
+          <p class="lede">Write these words down in order. They are shown once and cannot be recovered.</p>
+          <div id="mnemonic-text" class="mnemonic-grid"></div>
+          <div class="row">
+            <button type="button" id="btn-mnemonic-done" class="btn btn-primary">I saved it</button>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <div class="app" id="ready" hidden>
+      <aside class="nav">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">Ł</span>
+          <span class="brand-text nav-label">LTC Wallet</span>
         </div>
-      </section>
 
-      <section id="migrate" class="panel" hidden>
-        <h2>Encrypt wallet</h2>
-        <p>
-          Your mnemonic is currently stored in plaintext. Choose a passphrase to encrypt it at rest.
-        </p>
-        <label>
-          Passphrase
-          <input id="migrate-passphrase" type="password" autocomplete="new-password" />
-        </label>
-        <label>
-          Confirm passphrase
-          <input id="migrate-passphrase2" type="password" autocomplete="new-password" />
-        </label>
-        <div class="row">
-          <button type="button" id="btn-migrate">Encrypt and continue</button>
-        </div>
-      </section>
+        <nav class="nav-list" role="tablist" aria-label="Wallet sections">
+          <button
+            type="button"
+            id="nav-balance"
+            class="nav-item"
+            role="tab"
+            aria-controls="view-balance"
+            aria-selected="true"
+          >
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H17a2 2 0 0 1 2 2v1" />
+              <path d="M3 7.5V17a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2H5.5A2.5 2.5 0 0 1 3 7.5Z" />
+              <circle cx="16.5" cy="13" r="1.15" />
+            </svg>
+            <span class="nav-label">Balance</span>
+          </button>
+          <button
+            type="button"
+            id="nav-receive"
+            class="nav-item"
+            role="tab"
+            aria-controls="view-receive"
+            aria-selected="false"
+          >
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3v12" />
+              <path d="m7 11 5 5 5-5" />
+              <path d="M4 20h16" />
+            </svg>
+            <span class="nav-label">Receive</span>
+          </button>
+          <button
+            type="button"
+            id="nav-send"
+            class="nav-item"
+            role="tab"
+            aria-controls="view-send"
+            aria-selected="false"
+          >
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 21V9" />
+              <path d="m7 13 5-5 5 5" />
+              <path d="M4 4h16" />
+            </svg>
+            <span class="nav-label">Send</span>
+          </button>
+          <button
+            type="button"
+            id="nav-private"
+            class="nav-item"
+            role="tab"
+            aria-controls="view-private"
+            aria-selected="false"
+            hidden
+          >
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3l7 3v5.4c0 4.4-2.9 7.9-7 9.6-4.1-1.7-7-5.2-7-9.6V6l7-3Z" />
+              <path d="m9 12 2.2 2.2L15.5 10" />
+            </svg>
+            <span class="nav-label">Private</span>
+          </button>
+          <button
+            type="button"
+            id="nav-history"
+            class="nav-item"
+            role="tab"
+            aria-controls="view-history"
+            aria-selected="false"
+          >
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.5" />
+              <path d="M12 7.2V12l3.4 2" />
+            </svg>
+            <span class="nav-label">History</span>
+          </button>
+          <button
+            type="button"
+            id="nav-settings"
+            class="nav-item"
+            role="tab"
+            aria-controls="view-settings"
+            aria-selected="false"
+          >
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16" />
+              <path d="M4 12h16" />
+              <path d="M4 17h16" />
+              <circle cx="9.5" cy="7" r="2" />
+              <circle cx="15" cy="12" r="2" />
+              <circle cx="8" cy="17" r="2" />
+            </svg>
+            <span class="nav-label">Settings</span>
+          </button>
+        </nav>
+      </aside>
 
-      <section id="onboarding" class="panel" hidden>
-        <h2>Onboarding</h2>
-        <p>Create a new mainnet wallet or restore from a mnemonic.</p>
-        <label>
-          Passphrase (encrypts mnemonic at rest)
-          <input id="onboard-passphrase" type="password" autocomplete="new-password" />
-        </label>
-        <label>
-          Confirm passphrase
-          <input id="onboard-passphrase2" type="password" autocomplete="new-password" />
-        </label>
-        <div class="row">
-          <button type="button" id="btn-create">Create wallet</button>
-        </div>
-        <label>
-          Mnemonic
-          <textarea id="restore-mnemonic" rows="3" placeholder="twelve words…"></textarea>
-        </label>
-        <div class="row">
-          <button type="button" id="btn-restore">Restore wallet</button>
-        </div>
-      </section>
-
-      <section id="mnemonic" class="panel" hidden>
-        <h2>Backup mnemonic</h2>
-        <p>Write this down. It is shown once.</p>
-        <pre id="mnemonic-text"></pre>
-        <button type="button" id="btn-mnemonic-done">I saved it</button>
-      </section>
-
-      <section id="ready" class="panel" hidden>
-        <header class="home-header">
-          <h2>Home</h2>
-          <span class="badge" id="network-badge">mainnet</span>
+      <div class="content">
+        <header class="topbar">
+          <h2 class="topbar-title" id="view-title">Balance</h2>
+          <div class="topbar-actions">
+            <span class="sync-dot" id="sync-dot" data-state="idle" title="Idle"></span>
+            <span class="badge" id="network-badge">mainnet</span>
+            <button type="button" id="btn-sync" class="btn btn-secondary">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 11a8 8 0 0 0-13.7-5.2L4 8" />
+                <path d="M4 4v4h4" />
+                <path d="M4 13a8 8 0 0 0 13.7 5.2L20 16" />
+                <path d="M20 20v-4h-4" />
+              </svg>
+              <span class="btn-label" id="sync-label">Sync</span>
+            </button>
+            <button type="button" id="btn-theme" class="btn btn-ghost btn-icon" aria-label="Change theme">
+              <svg class="icon icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5 19 19M19 5l-1.5 1.5M6.5 17.5 5 19" />
+              </svg>
+              <svg class="icon icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z" />
+              </svg>
+            </button>
+          </div>
         </header>
 
-        <div class="home-section">
-          <h3>Balance</h3>
-          <p class="balance-total" id="balance-total">0.00000000 LTC</p>
-          <p class="balance-sats muted" id="balance-sats">(0 litoshis)</p>
-          <p class="balance-detail muted" id="balance-confirmed">Confirmed: 0.00000000 LTC</p>
-          <p class="balance-detail muted" id="balance-mweb" hidden>Private (MWEB): —</p>
-          <p class="balance-detail muted" id="balance-tip">Tip height: —</p>
-          <p class="balance-pending muted" id="balance-pending" hidden></p>
-          <p class="muted" id="mweb-status" hidden></p>
-          <div class="progress" id="mweb-progress" hidden>
-            <div class="progress-track">
-              <div class="progress-fill" id="mweb-progress-fill"></div>
+        <div class="views">
+          <section id="view-balance" class="view" role="tabpanel" aria-labelledby="nav-balance">
+            <div class="card card-hero">
+              <span class="hero-label">Total balance</span>
+              <p class="balance-total skeleton" id="balance-total">0.00000000 LTC</p>
+              <p class="balance-sats" id="balance-sats">(0 litoshis)</p>
+              <p class="balance-note" id="balance-pending" hidden></p>
             </div>
-            <p class="muted progress-text" id="mweb-progress-text"></p>
-          </div>
-        </div>
 
-        <div class="home-section">
-          <h3>Receive</h3>
-          <div class="receive-row">
-            <canvas id="receive-qr" width="180" height="180" aria-label="Receive address QR code"></canvas>
-            <div class="receive-meta">
-              <p class="mono receive-address" id="address"></p>
-              <div class="row">
-                <button type="button" id="btn-copy">Copy</button>
-                <button type="button" id="btn-address">Refresh address</button>
-                <button type="button" id="btn-sync">Sync</button>
+            <div class="stat-grid">
+              <div class="stat">
+                <span class="stat-label">Confirmed</span>
+                <span class="stat-value" id="balance-confirmed">—</span>
+              </div>
+              <div class="stat" id="stat-mweb" hidden>
+                <span class="stat-label">Private (MWEB)</span>
+                <span class="stat-value" id="balance-mweb">—</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Chain tip</span>
+                <span class="stat-value" id="balance-tip">—</span>
               </div>
             </div>
-          </div>
-          <div id="mweb-receive" hidden>
-            <p class="muted">Private receive (MWEB stealth)</p>
-            <canvas id="mweb-qr" width="180" height="180" aria-label="MWEB address QR code"></canvas>
-            <p class="mono receive-address" id="mweb-address"></p>
-            <div class="row">
-              <button type="button" id="btn-copy-mweb">Copy MWEB</button>
-              <button type="button" id="btn-resync-mweb">Resync MWEB</button>
+
+            <div class="card" id="mweb-status-card" hidden>
+              <h3>MWEB sync</h3>
+              <p class="hint" id="mweb-status" hidden></p>
+              <div class="progress" id="mweb-progress" hidden>
+                <div class="progress-track">
+                  <div class="progress-fill" id="mweb-progress-fill"></div>
+                </div>
+                <p class="hint progress-text" id="mweb-progress-text"></p>
+              </div>
             </div>
-          </div>
-        </div>
+          </section>
 
-        <div class="home-section">
-          <h3>Send</h3>
-          <form id="send-form" class="send-form">
-            <label>
-              Address
-              <input id="send-address" type="text" autocomplete="off" spellcheck="false" required />
-            </label>
-            <label>
-              Amount (LTC)
-              <input
-                id="send-amount"
-                type="text"
-                inputmode="decimal"
-                placeholder="0.00002940"
-                autocomplete="off"
-              />
-            </label>
-            <label class="checkbox-label">
-              <input id="send-drain" type="checkbox" />
-              Send max (drain wallet)
-            </label>
-            <label>
-              Fee rate (sat/vB)
-              <input id="send-fee-rate" type="number" min="1" step="1" value="1" required />
-            </label>
-            <div class="row">
-              <button type="submit" id="btn-send">Send</button>
+          <section id="view-receive" class="view" role="tabpanel" aria-labelledby="nav-receive" hidden>
+            <div class="card">
+              <h3>Your Litecoin address</h3>
+              <div class="receive-row">
+                <div class="qr-card">
+                  <canvas id="receive-qr" width="176" height="176" aria-label="Receive address QR code"></canvas>
+                </div>
+                <div class="receive-meta">
+                  <p class="mono receive-address" id="address"></p>
+                  <div class="row">
+                    <button type="button" id="btn-copy" class="btn btn-primary">
+                      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <rect x="9" y="9" width="11" height="11" rx="2" />
+                        <path d="M15 5.5A1.5 1.5 0 0 0 13.5 4H6a2 2 0 0 0-2 2v7.5A1.5 1.5 0 0 0 5.5 15" />
+                      </svg>
+                      <span class="btn-label">Copy</span>
+                    </button>
+                    <button type="button" id="btn-address" class="btn btn-secondary">
+                      <span class="btn-label">New address</span>
+                    </button>
+                  </div>
+                  <p class="hint">
+                    A fresh address per payment keeps your history harder to link. Old addresses keep
+                    working.
+                  </p>
+                </div>
+              </div>
             </div>
-          </form>
-          <p class="muted mono" id="last-txid" hidden></p>
-        </div>
 
-        <div class="home-section" id="mweb-actions" hidden>
-          <h3>Private (MWEB)</h3>
-          <p class="muted">
-            Exchanges and non-MWEB wallets fund your normal ltc1 address first. Then move funds
-            private with peg-in. Peg-out returns to a transparent address.
-          </p>
-          <label>
-            Peg-in amount (LTC)
-            <input id="pegin-amount" type="text" inputmode="decimal" placeholder="0.001" />
-          </label>
-          <div class="row">
-            <button type="button" id="btn-pegin">Move to private (peg-in)</button>
-          </div>
-          <label>
-            MWEB send address (ltcmweb1…)
-            <input id="mweb-send-address" type="text" autocomplete="off" spellcheck="false" />
-          </label>
-          <label>
-            MWEB send amount (LTC)
-            <input id="mweb-send-amount" type="text" inputmode="decimal" />
-          </label>
-          <div class="row">
-            <button type="button" id="btn-mweb-send">Send private</button>
-          </div>
-          <label>
-            Peg-out address (ltc1…)
-            <input id="pegout-address" type="text" autocomplete="off" spellcheck="false" />
-          </label>
-          <label>
-            Peg-out amount (LTC)
-            <input id="pegout-amount" type="text" inputmode="decimal" />
-          </label>
-          <div class="row">
-            <button type="button" id="btn-pegout">Peg out to transparent</button>
-          </div>
-        </div>
+            <div class="card" id="mweb-receive" hidden>
+              <h3>Private address <span class="badge badge-accent">MWEB</span></h3>
+              <p class="lede">A stealth address for confidential transfers from MWEB-aware wallets.</p>
+              <div class="receive-row">
+                <div class="qr-card">
+                  <canvas id="mweb-qr" width="176" height="176" aria-label="MWEB address QR code"></canvas>
+                </div>
+                <div class="receive-meta">
+                  <p class="mono receive-address" id="mweb-address"></p>
+                  <div class="row">
+                    <button type="button" id="btn-copy-mweb" class="btn btn-secondary">
+                      <span class="btn-label">Copy MWEB address</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
 
-        <div class="home-section">
-          <h3>History</h3>
-          <ul id="tx-list" class="tx-list"></ul>
-          <p class="muted" id="tx-empty">No transactions yet.</p>
-        </div>
+          <section id="view-send" class="view" role="tabpanel" aria-labelledby="nav-send" hidden>
+            <div class="card">
+              <h3>Send Litecoin</h3>
+              <form id="send-form" class="send-form">
+                <label class="field">
+                  <span class="field-label">Recipient address</span>
+                  <input
+                    id="send-address"
+                    class="mono"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="ltc1…"
+                    required
+                  />
+                </label>
+                <div class="field-grid">
+                  <label class="field">
+                    <span class="field-label">Amount (LTC)</span>
+                    <input
+                      id="send-amount"
+                      type="text"
+                      inputmode="decimal"
+                      placeholder="0.00002940"
+                      autocomplete="off"
+                    />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">Fee rate (sat/vB)</span>
+                    <input id="send-fee-rate" type="number" min="1" step="1" value="1" required />
+                  </label>
+                </div>
+                <label class="check">
+                  <input id="send-drain" type="checkbox" />
+                  <span>Send max — drain the whole transparent balance</span>
+                </label>
+                <div class="row">
+                  <button type="submit" id="btn-send" class="btn btn-primary">Review and send</button>
+                </div>
+              </form>
+              <p class="hint mono" id="last-txid" hidden></p>
+            </div>
+          </section>
 
-        <div class="home-section">
-          <h3>Settings</h3>
-          <label>
-            Electrum URL
-            <input id="settings-electrum" type="text" spellcheck="false" />
-          </label>
-          <label>
-            Litecoin RPC URL (optional; MWEB P2P broadcast is used otherwise)
-            <input id="settings-rpc" type="text" spellcheck="false" placeholder="http://127.0.0.1:9332 (cookie auth) or http://user:pass@host:9332" />
-          </label>
-          <label>
-            MWEB P2P peers (comma-separated host:port)
-            <input id="settings-peers" type="text" spellcheck="false" placeholder="127.0.0.1:9333" />
-          </label>
-          <div class="row">
-            <button type="button" id="btn-save-settings">Save settings</button>
-            <button type="button" id="btn-lock" class="secondary">Lock wallet</button>
-          </div>
-        </div>
+          <section id="view-private" class="view" role="tabpanel" aria-labelledby="nav-private" hidden>
+            <div id="mweb-actions" hidden>
+              <div class="card card-note">
+                <p class="lede">
+                  Exchanges and non-MWEB wallets fund your normal <code>ltc1</code> address first. Move
+                  those funds private with a peg-in; a peg-out returns them to a transparent address.
+                </p>
+              </div>
 
-        <p id="status" class="status"></p>
-      </section>
-    </main>
+              <div class="card">
+                <h3>Peg in</h3>
+                <p class="lede">Move transparent funds into the MWEB side. Matures after 6 blocks.</p>
+                <label class="field">
+                  <span class="field-label">Amount (LTC)</span>
+                  <input id="pegin-amount" type="text" inputmode="decimal" placeholder="0.001" />
+                </label>
+                <div class="row">
+                  <button type="button" id="btn-pegin" class="btn btn-primary">Move to private</button>
+                </div>
+              </div>
+
+              <div class="card">
+                <h3>Private send</h3>
+                <p class="lede">Confidential transfer to another MWEB stealth address.</p>
+                <label class="field">
+                  <span class="field-label">Recipient (ltcmweb1…)</span>
+                  <input
+                    id="mweb-send-address"
+                    class="mono"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="ltcmweb1…"
+                  />
+                </label>
+                <label class="field">
+                  <span class="field-label">Amount (LTC)</span>
+                  <input id="mweb-send-amount" type="text" inputmode="decimal" placeholder="0.001" />
+                </label>
+                <div class="row">
+                  <button type="button" id="btn-mweb-send" class="btn btn-primary">Send private</button>
+                </div>
+              </div>
+
+              <div class="card">
+                <h3>Peg out</h3>
+                <p class="lede">Return private funds to a transparent address.</p>
+                <label class="field">
+                  <span class="field-label">Destination (ltc1…)</span>
+                  <input
+                    id="pegout-address"
+                    class="mono"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    placeholder="ltc1…"
+                  />
+                </label>
+                <label class="field">
+                  <span class="field-label">Amount (LTC)</span>
+                  <input id="pegout-amount" type="text" inputmode="decimal" placeholder="0.001" />
+                </label>
+                <div class="row">
+                  <button type="button" id="btn-pegout" class="btn btn-secondary">
+                    Peg out to transparent
+                  </button>
+                </div>
+              </div>
+
+              <div class="card">
+                <h3>MWEB data</h3>
+                <p class="lede">
+                  Rebuild the local MWEB coin database from scratch. This re-downloads the full UTXO set
+                  and can take a while.
+                </p>
+                <div class="row">
+                  <button type="button" id="btn-resync-mweb" class="btn btn-ghost">Resync MWEB</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="view-history" class="view" role="tabpanel" aria-labelledby="nav-history" hidden>
+            <div class="card">
+              <h3>Transactions</h3>
+              <ul id="tx-list" class="tx-list"></ul>
+              <div class="empty" id="tx-empty">
+                <svg class="icon icon-lg" viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="8.5" />
+                  <path d="M12 7.2V12l3.4 2" />
+                </svg>
+                <p>No transactions yet.</p>
+              </div>
+            </div>
+          </section>
+
+          <section id="view-settings" class="view" role="tabpanel" aria-labelledby="nav-settings" hidden>
+            <div class="card">
+              <h3>Connection</h3>
+              <label class="field">
+                <span class="field-label">Electrum URL</span>
+                <input id="settings-electrum" class="mono" type="text" spellcheck="false" />
+              </label>
+              <label class="field">
+                <span class="field-label">Litecoin RPC URL</span>
+                <input
+                  id="settings-rpc"
+                  class="mono"
+                  type="text"
+                  spellcheck="false"
+                  placeholder="http://127.0.0.1:9332"
+                />
+                <span class="hint">Optional. MWEB broadcasts fall back to P2P when this is empty.</span>
+              </label>
+              <label class="field">
+                <span class="field-label">MWEB P2P peers</span>
+                <input
+                  id="settings-peers"
+                  class="mono"
+                  type="text"
+                  spellcheck="false"
+                  placeholder="127.0.0.1:9333"
+                />
+                <span class="hint">Comma-separated <code>host:port</code> pairs.</span>
+              </label>
+              <div class="row">
+                <button type="button" id="btn-save-settings" class="btn btn-primary">Save settings</button>
+              </div>
+            </div>
+
+            <div class="card">
+              <h3>Session</h3>
+              <p class="lede">
+                Locking clears the decrypted mnemonic from memory. You will need your passphrase to
+                unlock again.
+              </p>
+              <div class="row">
+                <button type="button" id="btn-lock" class="btn btn-secondary">
+                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="4.5" y="10.5" width="15" height="9.5" rx="2" />
+                    <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+                  </svg>
+                  <span class="btn-label">Lock wallet</span>
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast-region" aria-live="polite">
+      <div class="toast" id="toast" data-kind="info" hidden>
+        <span class="toast-dot" aria-hidden="true"></span>
+        <span class="toast-msg" id="status"></span>
+        <button type="button" class="toast-close" id="btn-toast-close" aria-label="Dismiss">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M6 6l12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+    </div>
   </body>
 </html>
