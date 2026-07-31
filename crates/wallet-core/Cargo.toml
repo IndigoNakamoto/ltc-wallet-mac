@@ -4,7 +4,11 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "BDK boundary, DTOs, and file-backed mnemonic storage for the Litecoin Mac wallet"
+description = "BDK boundary, DTOs, and encrypted mnemonic storage for the Litecoin Mac wallet"
+
+[features]
+default = ["mweb"]
+mweb = []
 
 [dependencies]
 # Nested checkout under ../../bdk so path deps to bdk/crates/* resolve.
@@ -12,11 +16,28 @@ bdk_wallet = { path = "../../../bdk/bdk_wallet", default-features = false, featu
     "std",
     "rusqlite",
     "keys-bip39",
+    "mweb",
+    "mweb-sqlite",
 ] }
 bdk_electrum = { path = "../../../bdk/crates/electrum", default-features = true }
+bdk_mweb = { path = "../../../bdk/crates/mweb", default-features = false, features = [
+    "std",
+    "zkp",
+    "persist",
+    "encrypt",
+    "rusqlite",
+    "lip0006",
+    "serde",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+ureq = { version = "2", default-features = true, features = ["json"] }
+hex = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

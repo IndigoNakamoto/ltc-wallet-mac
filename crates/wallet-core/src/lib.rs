@@ -8,17 +8,25 @@ mod dto;
 mod electrum;
 mod error;
 mod meta;
+mod mweb;
 mod network;
+mod rpc;
 mod secrets;
 
-pub use app::WalletApp;
+pub use app::{MemoryBackedApp, WalletApp};
 pub use dto::{
-    CreateWalletRequest, CreateWalletResponse, RestoreWalletRequest, SendRequest, SendResult,
-    SyncResult, WalletSummary,
+    CombinedSummary, CreateWalletRequest, CreateWalletResponse, MigrateEncryptRequest,
+    MwebBroadcastResult, MwebSendRequest, MwebSyncProgress, PeginRequest, PeginResult,
+    PegoutRequest, RestoreWalletRequest, SendRequest, SendResult, SyncResult, TxRecord,
+    UnlockRequest, UpdateSettingsRequest, WalletSettings, WalletSummary,
 };
 pub use error::WalletError;
 pub use network::WalletNetwork;
-pub use secrets::{FileSecretStore, MemoryStore, SecretStore};
+pub use secrets::{
+    EncryptedFileSecretStore, FileSecretStore, MemoryStore, SecretStore, UnlockableSecretStore,
+};
 
-/// Filename for the file-backed mnemonic store under the wallet data directory.
+/// Filename for the legacy plaintext mnemonic store.
 pub const MNEMONIC_FILE: &str = "wallet.mnemonic";
+/// Filename for the encrypted mnemonic store.
+pub const MNEMONIC_ENC_FILE: &str = "wallet.mnemonic.enc";

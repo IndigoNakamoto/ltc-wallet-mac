@@ -196,6 +196,29 @@ textarea {
   margin: 0 0 1rem;
 }
 
+.progress {
+  margin: 0.6rem 0 0;
+}
+
+.progress-track {
+  height: 0.5rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  margin: 0.3rem 0 0;
+  font-size: 0.85rem;
+}
+
 .status {
   color: var(--muted);
   min-height: 1.25rem;
@@ -204,4 +227,66 @@ textarea {
 
 #last-txid {
   margin: 0.5rem 0 0;
+}
+
+.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+button.secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.tx-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tx-list li {
+  display: grid;
+  grid-template-columns: 2.5rem 1fr auto;
+  gap: 0.35rem 0.75rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.9rem;
+}
+
+.tx-dir {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+}
+
+.tx-dir.in {
+  color: var(--accent);
+}
+
+.tx-dir.out {
+  color: var(--danger);
+}
+
+.tx-id {
+  grid-column: 1 / -1;
+}
+
+#tx-empty {
+  margin: 0.25rem 0 0;
+}
+
+input[type="password"] {
+  width: 100%;
+  font: inherit;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
 }

@@ -12,6 +12,12 @@ pub enum WalletError {
     #[error("wallet is not loaded")]
     NotLoaded,
 
+    #[error("wallet is locked; unlock with passphrase first")]
+    Locked,
+
+    #[error("incorrect passphrase")]
+    IncorrectPassphrase,
+
     #[error("invalid mnemonic: {0}")]
     InvalidMnemonic(String),
 
@@ -44,6 +50,12 @@ pub enum WalletError {
 
     #[error("failed to sign transaction: {0}")]
     Sign(String),
+
+    #[error("mweb error: {0}")]
+    Mweb(String),
+
+    #[error("litecoin rpc error: {0}")]
+    Rpc(String),
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

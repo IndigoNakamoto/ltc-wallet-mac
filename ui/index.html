@@ -16,7 +16,7 @@
       <section id="fatal" class="panel" hidden>
         <h2>Wallet data problem</h2>
         <p>
-          Local wallet files exist but the mnemonic secret is missing.
+          Local wallet files exist but the mnemonic secret is missing or locked.
           If you still have your backup phrase, reset and restore. Otherwise reset and create a new
           wallet (any funds on the old addresses need the old mnemonic).
         </p>
@@ -25,9 +25,51 @@
         </div>
       </section>
 
+      <section id="unlock" class="panel" hidden>
+        <h2>Unlock wallet</h2>
+        <p>Enter your passphrase to decrypt the mnemonic.</p>
+        <p class="muted">
+          Forgot passphrase? The only recovery is reset + restore from your mnemonic backup.
+        </p>
+        <label>
+          Passphrase
+          <input id="unlock-passphrase" type="password" autocomplete="current-password" />
+        </label>
+        <div class="row">
+          <button type="button" id="btn-unlock">Unlock</button>
+          <button type="button" id="btn-wipe-unlock" class="secondary">Reset wallet data</button>
+        </div>
+      </section>
+
+      <section id="migrate" class="panel" hidden>
+        <h2>Encrypt wallet</h2>
+        <p>
+          Your mnemonic is currently stored in plaintext. Choose a passphrase to encrypt it at rest.
+        </p>
+        <label>
+          Passphrase
+          <input id="migrate-passphrase" type="password" autocomplete="new-password" />
+        </label>
+        <label>
+          Confirm passphrase
+          <input id="migrate-passphrase2" type="password" autocomplete="new-password" />
+        </label>
+        <div class="row">
+          <button type="button" id="btn-migrate">Encrypt and continue</button>
+        </div>
+      </section>
+
       <section id="onboarding" class="panel" hidden>
         <h2>Onboarding</h2>
         <p>Create a new mainnet wallet or restore from a mnemonic.</p>
+        <label>
+          Passphrase (encrypts mnemonic at rest)
+          <input id="onboard-passphrase" type="password" autocomplete="new-password" />
+        </label>
+        <label>
+          Confirm passphrase
+          <input id="onboard-passphrase2" type="password" autocomplete="new-password" />
+        </label>
         <div class="row">
           <button type="button" id="btn-create">Create wallet</button>
         </div>
@@ -58,8 +100,16 @@
           <p class="balance-total" id="balance-total">0.00000000 LTC</p>
           <p class="balance-sats muted" id="balance-sats">(0 litoshis)</p>
           <p class="balance-detail muted" id="balance-confirmed">Confirmed: 0.00000000 LTC</p>
+          <p class="balance-detail muted" id="balance-mweb" hidden>Private (MWEB): —</p>
           <p class="balance-detail muted" id="balance-tip">Tip height: —</p>
           <p class="balance-pending muted" id="balance-pending" hidden></p>
+          <p class="muted" id="mweb-status" hidden></p>
+          <div class="progress" id="mweb-progress" hidden>
+            <div class="progress-track">
+              <div class="progress-fill" id="mweb-progress-fill"></div>
+            </div>
+            <p class="muted progress-text" id="mweb-progress-text"></p>
+          </div>
         </div>
 
         <div class="home-section">
@@ -75,6 +125,15 @@
               </div>
             </div>
           </div>
+          <div id="mweb-receive" hidden>
+            <p class="muted">Private receive (MWEB stealth)</p>
+            <canvas id="mweb-qr" width="180" height="180" aria-label="MWEB address QR code"></canvas>
+            <p class="mono receive-address" id="mweb-address"></p>
+            <div class="row">
+              <button type="button" id="btn-copy-mweb">Copy MWEB</button>
+              <button type="button" id="btn-resync-mweb">Resync MWEB</button>
+            </div>
+          </div>
         </div>
 
         <div class="home-section">
@@ -85,15 +144,18 @@
               <input id="send-address" type="text" autocomplete="off" spellcheck="false" required />
             </label>
             <label>
-              Amount (litoshis)
+              Amount (LTC)
               <input
                 id="send-amount"
-                type="number"
-                min="2940"
-                step="1"
-                placeholder="min ~2940 for ltc1"
-                required
+                type="text"
+                inputmode="decimal"
+                placeholder="0.00002940"
+                autocomplete="off"
               />
+            </label>
+            <label class="checkbox-label">
+              <input id="send-drain" type="checkbox" />
+              Send max (drain wallet)
             </label>
             <label>
               Fee rate (sat/vB)
@@ -104,6 +166,69 @@
             </div>
           </form>
           <p class="muted mono" id="last-txid" hidden></p>
+        </div>
+
+        <div class="home-section" id="mweb-actions" hidden>
+          <h3>Private (MWEB)</h3>
+          <p class="muted">
+            Exchanges and non-MWEB wallets fund your normal ltc1 address first. Then move funds
+            private with peg-in. Peg-out returns to a transparent address.
+          </p>
+          <label>
+            Peg-in amount (LTC)
+            <input id="pegin-amount" type="text" inputmode="decimal" placeholder="0.001" />
+          </label>
+          <div class="row">
+            <button type="button" id="btn-pegin">Move to private (peg-in)</button>
+          </div>
+          <label>
+            MWEB send address (ltcmweb1…)
+            <input id="mweb-send-address" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            MWEB send amount (LTC)
+            <input id="mweb-send-amount" type="text" inputmode="decimal" />
+          </label>
+          <div class="row">
+            <button type="button" id="btn-mweb-send">Send private</button>
+          </div>
+          <label>
+            Peg-out address (ltc1…)
+            <input id="pegout-address" type="text" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            Peg-out amount (LTC)
+            <input id="pegout-amount" type="text" inputmode="decimal" />
+          </label>
+          <div class="row">
+            <button type="button" id="btn-pegout">Peg out to transparent</button>
+          </div>
+        </div>
+
+        <div class="home-section">
+          <h3>History</h3>
+          <ul id="tx-list" class="tx-list"></ul>
+          <p class="muted" id="tx-empty">No transactions yet.</p>
+        </div>
+
+        <div class="home-section">
+          <h3>Settings</h3>
+          <label>
+            Electrum URL
+            <input id="settings-electrum" type="text" spellcheck="false" />
+          </label>
+          <label>
+            Litecoin RPC URL (required for pure MWEB broadcast)
+            <input id="settings-rpc" type="text" spellcheck="false" placeholder="http://user:pass@127.0.0.1:9332" />
+          </label>
+          <label>
+            MWEB P2P peers (comma-separated host:port)
+            <input id="settings-peers" type="text" spellcheck="false" placeholder="127.0.0.1:9333" />
+          </label>
+          <div class="row">
+            <button type="button" id="btn-save-settings">Save settings</button>
+            <button type="button" id="btn-lock" class="secondary">Lock wallet</button>
+          </div>
         </div>
 
         <p id="status" class="status"></p>

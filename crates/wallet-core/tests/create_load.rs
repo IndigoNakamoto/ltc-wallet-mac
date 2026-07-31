@@ -2,18 +2,18 @@ use std::sync::Arc;
 
 use tempfile::tempdir;
 use wallet_core::{
-    CreateWalletRequest, MemoryStore, RestoreWalletRequest, SecretStore, WalletApp, WalletError,
-    WalletNetwork,
+    CreateWalletRequest, MemoryBackedApp, MemoryStore, RestoreWalletRequest, SecretStore,
+    SendRequest, WalletError, WalletNetwork,
 };
 
-fn test_app() -> WalletApp {
-    WalletApp::with_secrets(Arc::new(MemoryStore::new()))
+fn with_secrets(secrets: Arc<dyn SecretStore>) -> MemoryBackedApp {
+    wallet_core::WalletApp::with_secrets(secrets)
 }
 
 #[test]
 fn create_testnet_returns_tltc_address_and_mnemonic() {
     let dir = tempdir().unwrap();
-    let app = test_app();
+    let app = with_secrets(Arc::new(MemoryStore::new()));
 
     let resp = app
         .create(
@@ -39,10 +39,10 @@ fn create_testnet_returns_tltc_address_and_mnemonic() {
 #[test]
 fn create_then_load_round_trip() {
     let dir = tempdir().unwrap();
-    let secrets: Arc<dyn wallet_core::SecretStore> = Arc::new(MemoryStore::new());
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemoryStore::new());
 
     let created = {
-        let app = WalletApp::with_secrets(Arc::clone(&secrets));
+        let app = with_secrets(Arc::clone(&secrets));
         app.create(
             dir.path(),
             CreateWalletRequest {
@@ -54,7 +54,7 @@ fn create_then_load_round_trip() {
     };
 
     let loaded = {
-        let app = WalletApp::with_secrets(secrets);
+        let app = with_secrets(secrets);
         app.load(dir.path()).expect("load")
     };
 
@@ -66,7 +66,7 @@ fn create_then_load_round_trip() {
 #[test]
 fn second_create_fails_already_exists() {
     let dir = tempdir().unwrap();
-    let app = test_app();
+    let app = with_secrets(Arc::new(MemoryStore::new()));
     let req = CreateWalletRequest {
         network: WalletNetwork::Testnet,
         electrum_url: None,
@@ -79,9 +79,6 @@ fn second_create_fails_already_exists() {
 
 #[test]
 fn restore_known_mnemonic_is_deterministic() {
-    // Same master key as bdk_wallet Bip84 doctest (tprv…AQ5R8L).
-    // BIP39 mnemonic that yields a known first address is awkward without a fixture seed;
-    // instead restore twice and assert identical receive addresses.
     let mnemonic =
         "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
@@ -89,7 +86,7 @@ fn restore_known_mnemonic_is_deterministic() {
     let dir_b = tempdir().unwrap();
 
     let summary_a = {
-        let app = test_app();
+        let app = with_secrets(Arc::new(MemoryStore::new()));
         app.restore(
             dir_a.path(),
             RestoreWalletRequest {
@@ -102,7 +99,7 @@ fn restore_known_mnemonic_is_deterministic() {
     };
 
     let summary_b = {
-        let app = test_app();
+        let app = with_secrets(Arc::new(MemoryStore::new()));
         app.restore(
             dir_b.path(),
             RestoreWalletRequest {
@@ -121,7 +118,7 @@ fn restore_known_mnemonic_is_deterministic() {
 #[test]
 fn send_rejects_invalid_address() {
     let dir = tempdir().unwrap();
-    let app = test_app();
+    let app = with_secrets(Arc::new(MemoryStore::new()));
     app.create(
         dir.path(),
         CreateWalletRequest {
@@ -132,10 +129,11 @@ fn send_rejects_invalid_address() {
     .unwrap();
 
     let err = app
-        .send(wallet_core::SendRequest {
+        .send(SendRequest {
             address: "not-an-address".into(),
             amount_sats: 1000,
             fee_rate_sat_vb: 1,
+            drain: false,
         })
         .expect_err("invalid address");
     assert!(matches!(err, WalletError::InvalidAddress(_)));
@@ -145,7 +143,7 @@ fn send_rejects_invalid_address() {
 fn create_after_orphaned_db_wipes_and_succeeds() {
     let dir = tempdir().unwrap();
     let secrets = Arc::new(MemoryStore::new());
-    let app = WalletApp::with_secrets(Arc::clone(&secrets) as Arc<dyn wallet_core::SecretStore>);
+    let app = with_secrets(Arc::clone(&secrets) as Arc<dyn SecretStore>);
     app.create(
         dir.path(),
         CreateWalletRequest {
@@ -155,7 +153,6 @@ fn create_after_orphaned_db_wipes_and_succeeds() {
     )
     .unwrap();
 
-    // Simulate lost mnemonic secret while DB remains.
     secrets.delete_mnemonic().unwrap();
     assert!(app.exists(dir.path()));
     assert!(matches!(
@@ -163,7 +160,7 @@ fn create_after_orphaned_db_wipes_and_succeeds() {
         WalletError::MissingMnemonic
     ));
 
-    let app2 = WalletApp::with_secrets(secrets);
+    let app2 = with_secrets(secrets);
     let resp = app2
         .create(
             dir.path(),
@@ -179,7 +176,7 @@ fn create_after_orphaned_db_wipes_and_succeeds() {
 #[test]
 fn create_marks_needs_full_scan_in_meta() {
     let dir = tempdir().unwrap();
-    let app = test_app();
+    let app = with_secrets(Arc::new(MemoryStore::new()));
     app.create(
         dir.path(),
         CreateWalletRequest {
@@ -205,7 +202,6 @@ fn file_secret_store_roundtrip() {
     store.set_mnemonic(phrase).expect("set");
     let got = store.get_mnemonic().expect("get");
     assert_eq!(got.as_deref(), Some(phrase));
-    // Fresh store instance must still read the file (process-restart equivalent).
     let store2 = FileSecretStore::new(&path);
     assert_eq!(store2.get_mnemonic().unwrap().as_deref(), Some(phrase));
     store2.delete_mnemonic().expect("delete");

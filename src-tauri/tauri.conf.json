@@ -15,7 +15,7 @@
       {
         "title": "LTC Wallet",
         "width": 880,
-        "height": 640
+        "height": 720
       }
     ],
     "security": {
@@ -24,13 +24,23 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["app", "dmg"],
+    "category": "Finance",
+    "shortDescription": "Native Litecoin wallet for macOS",
+    "longDescription": "BIP84 transparent Litecoin wallet with Electrum sync and optional MWEB privacy features.",
+    "copyright": "Copyright © Indigo Nakamoto",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "hardenedRuntime": true,
+      "signingIdentity": null,
+      "entitlements": "Entitlements.plist"
+    }
   }
 }

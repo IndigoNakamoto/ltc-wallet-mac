@@ -20,11 +20,26 @@ impl WalletNetwork {
         }
     }
 
+    /// Default Electrum-LTC endpoints in fallback order (first = default for new wallets).
+    ///
+    /// Public community servers come and go; connection code should try these in order
+    /// rather than depending on any single one.
+    pub fn default_electrum_urls(self) -> &'static [&'static str] {
+        match self {
+            Self::Mainnet => &[
+                "ssl://backup.electrum-ltc.org:443",
+                "ssl://electrum.ltc.xurious.com:50002",
+                "ssl://electrum-ltc.bysh.me:50002",
+            ],
+            Self::Testnet => &[
+                "ssl://electrum.ltc.xurious.com:51002",
+                "ssl://electrum-ltc.bysh.me:51002",
+            ],
+        }
+    }
+
     /// Default Electrum-LTC endpoint for this network.
     pub fn default_electrum_url(self) -> &'static str {
-        match self {
-            Self::Mainnet => "ssl://electrum-ltc.bysh.me:50002",
-            Self::Testnet => "ssl://electrum-ltc.bysh.me:51002",
-        }
+        self.default_electrum_urls()[0]
     }
 }

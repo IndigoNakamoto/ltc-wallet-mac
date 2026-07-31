@@ -5,12 +5,20 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::WalletError;
 use crate::network::WalletNetwork;
+use crate::{MNEMONIC_ENC_FILE, MNEMONIC_FILE};
 
 pub const WALLET_DB_FILE: &str = "wallet.sqlite";
 pub const WALLET_META_FILE: &str = "wallet_meta.json";
+pub const MWEB_DB_FILE: &str = "mweb.sqlite";
+pub const MWEB_SYNC_FILE: &str = "mweb_sync.json";
+pub const MWEB_INDEX_FILE: &str = "mweb_receive_index.txt";
 
 fn default_true() -> bool {
     true
+}
+
+fn default_mweb_peers() -> Vec<String> {
+    vec!["127.0.0.1:9333".into()]
 }
 
 /// Lightweight metadata stored beside the BDK sqlite DB (never secrets).
@@ -21,6 +29,15 @@ pub struct WalletMeta {
     /// When true, the next sync runs a BIP84 full_scan; cleared after success.
     #[serde(default = "default_true")]
     pub needs_full_scan: bool,
+    /// When true, MWEB needs a fresh scan after restore.
+    #[serde(default = "default_true")]
+    pub needs_mweb_scan: bool,
+    /// Optional litecoind RPC for pure MWEB broadcast.
+    #[serde(default)]
+    pub litecoin_rpc_url: Option<String>,
+    /// LIP-0006 P2P peers (`host:port`).
+    #[serde(default = "default_mweb_peers")]
+    pub mweb_peers: Vec<String>,
 }
 
 impl WalletMeta {
@@ -30,6 +47,9 @@ impl WalletMeta {
             electrum_url: electrum_url
                 .unwrap_or_else(|| network.default_electrum_url().to_string()),
             needs_full_scan: true,
+            needs_mweb_scan: true,
+            litecoin_rpc_url: None,
+            mweb_peers: default_mweb_peers(),
         }
     }
 }
@@ -42,10 +62,22 @@ pub fn meta_path(data_dir: &Path) -> PathBuf {
     data_dir.join(WALLET_META_FILE)
 }
 
+pub fn mweb_db_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(MWEB_DB_FILE)
+}
+
+pub fn mweb_sync_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(MWEB_SYNC_FILE)
+}
+
+pub fn mweb_index_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(MWEB_INDEX_FILE)
+}
+
 pub fn write_meta(data_dir: &Path, meta: &WalletMeta) -> Result<(), WalletError> {
     fs::create_dir_all(data_dir)?;
-    let json = serde_json::to_string_pretty(meta)
-        .map_err(|e| WalletError::Meta(e.to_string()))?;
+    let json =
+        serde_json::to_string_pretty(meta).map_err(|e| WalletError::Meta(e.to_string()))?;
     fs::write(meta_path(data_dir), json)?;
     Ok(())
 }
@@ -65,15 +97,35 @@ pub fn wallet_files_exist(data_dir: &Path) -> bool {
     db_path(data_dir).is_file()
 }
 
-/// Remove wallet DB/meta files (and sqlite sidecars). Ignores missing paths.
+pub fn validate_electrum_url(url: &str) -> Result<(), WalletError> {
+    let url = url.trim();
+    let ok = (url.starts_with("ssl://") || url.starts_with("tcp://"))
+        && url.rfind(':').map(|i| url[i + 1..].parse::<u16>().is_ok()).unwrap_or(false);
+    if ok {
+        Ok(())
+    } else {
+        Err(WalletError::Meta(
+            "electrum URL must be ssl://host:port or tcp://host:port".into(),
+        ))
+    }
+}
+
+/// Remove wallet DB/meta/secret/MWEB files (and sqlite sidecars). Ignores missing paths.
 pub fn remove_wallet_files(data_dir: &Path) -> Result<(), WalletError> {
     let db = db_path(data_dir);
+    let mweb_db = mweb_db_path(data_dir);
     for path in [
         db.clone(),
         PathBuf::from(format!("{}-wal", db.display())),
         PathBuf::from(format!("{}-shm", db.display())),
+        mweb_db.clone(),
+        PathBuf::from(format!("{}-wal", mweb_db.display())),
+        PathBuf::from(format!("{}-shm", mweb_db.display())),
         meta_path(data_dir),
-        data_dir.join(crate::MNEMONIC_FILE),
+        mweb_sync_path(data_dir),
+        mweb_index_path(data_dir),
+        data_dir.join(MNEMONIC_FILE),
+        data_dir.join(MNEMONIC_ENC_FILE),
     ] {
         match fs::remove_file(&path) {
             Ok(()) => {}

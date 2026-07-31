@@ -18,9 +18,9 @@ ltc-wallet-mac/
   docs/
     CHAT_HANDOFF.md       # short decisions for new Cursor chats
     ARCHITECTURE.md       # this file
-  crates/wallet-core/     # BDK boundary + DTOs + file secrets
+  crates/wallet-core/     # BDK boundary + DTOs + encrypted secrets + MWEB
   src-tauri/              # Tauri app (commands → wallet-core)
-  ui/                     # Frontend (receive / balance / send)
+  ui/                     # Frontend (receive / balance / send / settings)
 ```
 
 Sibling checkouts (expected on a dev machine):
@@ -47,8 +47,8 @@ Sibling checkouts (expected on a dev machine):
 ┌─────────────────▼───────────────────┐
 │  wallet-core                        │
 │  PersistedWallet + Electrum        │
-│  FileSecretStore (wallet.mnemonic)  │
-│  (v0.2) MwebStore + LIP peer        │
+│  EncryptedFileSecretStore           │
+│  MwebStore + LIP-0006 peer          │
 └─────────────────┬───────────────────┘
                   │
 ┌─────────────────▼───────────────────┐
@@ -102,8 +102,9 @@ impl WalletApp {
 
 - Transparent wallet: `PersistedWallet` + `rusqlite` under  
   `~/Library/Application Support/<bundle-id>/wallet.sqlite`
-- Mnemonic: `wallet.mnemonic` beside the DB (mode `0600`); Keychain deferred until reliable
-- v0.2: `MwebStore` beside the wallet (`mweb.db` + optional `mweb_sync.json`) — never merge confidential coins into `IndexedTxGraph`
+- Mnemonic: `wallet.mnemonic.enc` (Argon2id + ChaCha20-Poly1305, mode `0600`); legacy plaintext migrated once
+- MWEB: `mweb.sqlite` + `mweb_sync.json` + `mweb_receive_index.txt` — never merge confidential coins into `IndexedTxGraph`
+- Pure MWEB broadcast requires configured litecoind RPC; identify by **wtxid**
 
 ### Sync / send internals
 
@@ -159,11 +160,12 @@ Flags: `syncing`, `sending`, `error`, `lastTxid`. Disable Send while `syncing ||
 
 Default testnet fee rate for early builds: `1` sat/vB (matches BDK Electrum E2E).
 
-## v0.2 MWEB (deferred)
+## v0.2 MWEB
 
-- Feature-flag `mweb` on `bdk_wallet`
-- Tip seam: Electrum/Esplora tip → `MwebSyncer` / LIP-0006 peer (`LITECOIN_P2P`)
-- Peg-in maturity 6 blocks; pure MWEB broadcast prefers node RPC + **wtxid**
+- Feature-flags `mweb` + `mweb-sqlite` on `bdk_wallet`
+- Tip seam: Electrum tip → `MwebSyncer` tip-only / LIP-0006 peer pool
+- Peg-in is a self-transfer from transparent UTXOs; maturity 6 blocks
+- Pure MWEB send/peg-out blocked without RPC URL (no silent Electrum fallback)
 - Combined balance via `balance_combined`; bifurcated coin DBs
 - Do not index HogAddr / peg-in bridge outs as transparent UTXOs
 
@@ -173,13 +175,14 @@ Ops reference: sibling `bdk/docs/MWEB_PEER_OPS.md`, `LITECOIN_E2E.md` (`mainnet_
 
 - Never log mnemonics or descriptors with secrets
 - Clear create-response mnemonic from frontend memory after backup confirm
-- Mnemonic file permissions `0600`; Keychain migration later if needed
-- Notarization / hardened runtime: later packaging milestone
+- Encrypted mnemonic `0600`; passphrase unlock; wipe is only recovery if passphrase is lost
+- Hardened runtime + network client entitlement; notarization requires Apple Developer ID
 
 ## Implementation order
 
-1. `wallet-core` + CLI smoke (create / sync / address / send testnet)
-2. Tauri scaffold + commands printing JSON summary
-3. Onboarding + mnemonic + Home + Send
-4. Packaging (icon, bundle id, notarization)
-5. MWEB v0.2
+1. ~~`wallet-core` + CLI smoke~~
+2. ~~Tauri scaffold + commands~~
+3. ~~Onboarding + mnemonic + Home + Send + usability~~
+4. ~~Encrypted secrets + settings + packaging prep~~
+5. ~~MWEB store / tip seam / peg-in / send / peg-out surface~~
+6. Live MWEB E2E + notarized release
