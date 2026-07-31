@@ -2,8 +2,10 @@
 //!
 //! Public API exposes serde DTOs only. BDK types remain private.
 
+mod aezeed;
 mod app;
 mod descriptors;
+mod discovery;
 mod dto;
 mod electrum;
 mod error;
@@ -13,11 +15,13 @@ mod mweb_history;
 mod network;
 mod rpc;
 mod secrets;
+mod seed;
 
 pub use app::{MemoryBackedApp, WalletApp};
+pub use seed::{derive_preview, DerivePreview, MasterSecret, MwebSchemePreview};
 pub use dto::{
     CombinedSummary, CreateWalletRequest, CreateWalletResponse, MigrateEncryptRequest,
-    MwebBroadcastResult, MwebSendRequest, MwebSyncProgress, PeginRequest, PeginResult,
+    MwebBroadcastResult, MwebScheme, MwebSendRequest, MwebSyncProgress, PeginRequest, PeginResult,
     PegoutRequest, RestoreWalletRequest, SendRequest, SendResult, SyncResult, TxKind, TxRecord,
     UnlockRequest, UpdateSettingsRequest, WalletSettings, WalletSummary,
 };

@@ -93,6 +93,8 @@ fn restore_known_mnemonic_is_deterministic() {
                 mnemonic: mnemonic.into(),
                 network: WalletNetwork::Testnet,
                 electrum_url: None,
+                mweb_scheme: Default::default(),
+                aezeed_passphrase: None,
             },
         )
         .expect("restore a")
@@ -106,6 +108,8 @@ fn restore_known_mnemonic_is_deterministic() {
                 mnemonic: mnemonic.into(),
                 network: WalletNetwork::Testnet,
                 electrum_url: None,
+                mweb_scheme: Default::default(),
+                aezeed_passphrase: None,
             },
         )
         .expect("restore b")

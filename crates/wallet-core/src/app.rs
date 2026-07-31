@@ -11,10 +11,10 @@ use bdk_wallet::psbt::PsbtUtils;
 use bdk_wallet::rusqlite::Connection;
 use bdk_wallet::{KeychainKind, PersistedWallet, SignOptions};
 
-use crate::descriptors::{self, create_params, load_params, parse_mnemonic};
+use crate::descriptors::{self, create_params, load_params};
 use crate::dto::{
     CombinedSummary, CreateWalletRequest, CreateWalletResponse, MigrateEncryptRequest,
-    MwebBroadcastResult, MwebSendRequest, PeginRequest, PeginResult, PegoutRequest,
+    MwebBroadcastResult, MwebScheme, MwebSendRequest, PeginRequest, PeginResult, PegoutRequest,
     RestoreWalletRequest, SendRequest, SendResult, SyncResult, TxKind, TxRecord, UnlockRequest,
     UpdateSettingsRequest, WalletSettings, WalletSummary,
 };
@@ -24,6 +24,7 @@ use crate::meta::{self, WalletMeta};
 use crate::mweb::{self, MwebRuntime};
 use crate::network::WalletNetwork;
 use crate::secrets::{EncryptedFileSecretStore, SecretStore, UnlockableSecretStore};
+use crate::seed::MasterSecret;
 use crate::{MNEMONIC_ENC_FILE, MNEMONIC_FILE};
 
 struct WalletState {
@@ -36,6 +37,7 @@ struct WalletState {
     active_electrum_url: Option<String>,
     litecoin_rpc_url: Option<String>,
     mweb_peers: Vec<String>,
+    mweb_scheme: MwebScheme,
     data_dir: PathBuf,
     needs_full_scan: bool,
     needs_mweb_scan: bool,
@@ -167,8 +169,15 @@ impl WalletApp {
         passphrase: &str,
     ) -> Result<CreateWalletResponse, WalletError> {
         let mnemonic = descriptors::generate_mnemonic()?;
-        let summary =
-            self.create_or_restore(data_dir, &mnemonic, req.network, req.electrum_url, passphrase)?;
+        let secret = MasterSecret::parse(&mnemonic, None)?;
+        let summary = self.create_or_restore(
+            data_dir,
+            &secret,
+            req.network,
+            req.electrum_url,
+            passphrase,
+            MwebScheme::default(),
+        )?;
         Ok(CreateWalletResponse { mnemonic, summary })
     }
 
@@ -178,12 +187,14 @@ impl WalletApp {
         req: RestoreWalletRequest,
         passphrase: &str,
     ) -> Result<WalletSummary, WalletError> {
+        let secret = MasterSecret::parse(&req.mnemonic, req.aezeed_passphrase.as_deref())?;
         self.create_or_restore(
             data_dir,
-            &req.mnemonic,
+            &secret,
             req.network,
             req.electrum_url,
             passphrase,
+            req.mweb_scheme,
         )
     }
 
@@ -194,20 +205,26 @@ impl WalletApp {
         }
 
         let meta = meta::read_meta(data_dir)?;
-        let mnemonic_str = self
+        let stored = self
             .secrets
             .get_mnemonic()?
             .ok_or(WalletError::MissingMnemonic)?;
-        let mnemonic = parse_mnemonic(&mnemonic_str)?;
+        let secret = MasterSecret::from_stored(&stored)?;
 
         let mut db = Connection::open(meta::db_path(data_dir))
             .map_err(|e| WalletError::Persist(e.to_string()))?;
-        let params = load_params(&mnemonic, meta.network)?;
+        let params = load_params(&secret, meta.network)?;
         let wallet = PersistedWallet::load(&mut db, params)
             .map_err(|e| WalletError::Persist(e.to_string()))?
             .ok_or(WalletError::NotFound)?;
 
-        let mweb = MwebRuntime::open(data_dir, &mnemonic, meta.network).ok();
+        let mweb = MwebRuntime::open(
+            data_dir,
+            &secret,
+            meta.network,
+            meta.mweb_scheme.to_master_scheme(),
+        )
+        .ok();
 
         let mut state = WalletState {
             last_tip_height: wallet.latest_checkpoint().height(),
@@ -218,6 +235,7 @@ impl WalletApp {
             active_electrum_url: None,
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
+            mweb_scheme: meta.mweb_scheme,
             data_dir: data_dir.to_path_buf(),
             needs_full_scan: meta.needs_full_scan,
             needs_mweb_scan: meta.needs_mweb_scan,
@@ -339,6 +357,7 @@ impl WalletApp {
             electrum_url: state.electrum_url.clone(),
             litecoin_rpc_url: state.litecoin_rpc_url.clone(),
             mweb_peers: state.mweb_peers.clone(),
+            mweb_scheme: state.mweb_scheme,
         })
     }
 
@@ -367,6 +386,7 @@ impl WalletApp {
             needs_mweb_scan: state.needs_mweb_scan,
             litecoin_rpc_url: state.litecoin_rpc_url.clone(),
             mweb_peers: state.mweb_peers.clone(),
+            mweb_scheme: state.mweb_scheme,
         };
         meta::write_meta(&state.data_dir, &meta)?;
         Ok(())
@@ -377,6 +397,7 @@ impl WalletApp {
         let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
 
+        let electrum_started = std::time::Instant::now();
         let client = connect_electrum(state)?;
         client.populate_tx_cache(state.wallet.tx_graph().full_txs().map(|tx_node| tx_node.tx));
 
@@ -408,6 +429,7 @@ impl WalletApp {
             .wallet
             .persist(&mut state.db)
             .map_err(|e| WalletError::Persist(e.to_string()))?;
+        let electrum_ms = electrum_started.elapsed().as_millis() as u64;
 
         let tip_height = state.wallet.latest_checkpoint().height();
         let tip_hash = state.wallet.latest_checkpoint().hash();
@@ -424,7 +446,9 @@ impl WalletApp {
         }
 
         // MWEB sync (best-effort; peer failure → stale, not hard error).
+        let mut mweb_ms = 0u64;
         if let Some(ref mut mweb) = state.mweb {
+            let mweb_started = std::time::Instant::now();
             let peers = state.mweb_peers.clone();
             let network = state.network;
             // Hash on the current chain at the previous MWEB sync height, so the syncer
@@ -448,6 +472,7 @@ impl WalletApp {
                 state.needs_mweb_scan = false;
             }
             let _ = mweb.persist(&state.data_dir);
+            mweb_ms = mweb_started.elapsed().as_millis() as u64;
         }
 
         let meta = WalletMeta {
@@ -457,26 +482,64 @@ impl WalletApp {
             needs_mweb_scan: state.needs_mweb_scan,
             litecoin_rpc_url: state.litecoin_rpc_url.clone(),
             mweb_peers: state.mweb_peers.clone(),
+            mweb_scheme: state.mweb_scheme,
         };
         meta::write_meta(&state.data_dir, &meta)?;
 
         let tx_count_after = state.wallet.transactions().count();
         let new_txs = tx_count_after.saturating_sub(tx_count_before) as u32;
         let summary = build_summary(state)?;
-        Ok(SyncResult { summary, new_txs })
+        Ok(SyncResult {
+            summary,
+            new_txs,
+            electrum_ms,
+            mweb_ms,
+        })
     }
 
     pub fn resync_mweb(&self) -> Result<(), WalletError> {
+        self.resync_mweb_inner(None)
+    }
+
+    /// Switch the MWEB derivation scheme and rescan under it. Wipes local
+    /// MWEB state (coins are re-discovered from the chain); transparent
+    /// wallet data is untouched.
+    pub fn set_mweb_scheme(&self, scheme: MwebScheme) -> Result<(), WalletError> {
+        self.resync_mweb_inner(Some(scheme))
+    }
+
+    fn resync_mweb_inner(&self, new_scheme: Option<MwebScheme>) -> Result<(), WalletError> {
         self.ensure_unlocked()?;
         let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
         mweb::wipe_mweb_files(&state.data_dir)?;
-        let mnemonic_str = self
+        // A manual resync usually means something looked wrong, so re-crawl
+        // rather than reusing peers that may be part of the problem.
+        crate::discovery::clear_cache();
+        let stored = self
             .secrets
             .get_mnemonic()?
             .ok_or(WalletError::MissingMnemonic)?;
-        let mnemonic = parse_mnemonic(&mnemonic_str)?;
-        state.mweb = Some(MwebRuntime::open(&state.data_dir, &mnemonic, state.network)?);
+        let secret = MasterSecret::from_stored(&stored)?;
+        if let Some(scheme) = new_scheme {
+            state.mweb_scheme = scheme;
+            let meta = WalletMeta {
+                network: state.network,
+                electrum_url: state.electrum_url.clone(),
+                needs_full_scan: state.needs_full_scan,
+                needs_mweb_scan: true,
+                litecoin_rpc_url: state.litecoin_rpc_url.clone(),
+                mweb_peers: state.mweb_peers.clone(),
+                mweb_scheme: scheme,
+            };
+            meta::write_meta(&state.data_dir, &meta)?;
+        }
+        state.mweb = Some(MwebRuntime::open(
+            &state.data_dir,
+            &secret,
+            state.network,
+            state.mweb_scheme.to_master_scheme(),
+        )?);
         state.needs_mweb_scan = true;
         let tip_height = state.wallet.latest_checkpoint().height();
         let tip_hash = state.wallet.latest_checkpoint().hash();
@@ -629,10 +692,11 @@ impl WalletApp {
     fn create_or_restore(
         &self,
         data_dir: &Path,
-        mnemonic_str: &str,
+        secret: &MasterSecret,
         network: WalletNetwork,
         electrum_url: Option<String>,
         passphrase: &str,
+        mweb_scheme: MwebScheme,
     ) -> Result<WalletSummary, WalletError> {
         if passphrase.trim().is_empty() {
             return Err(WalletError::SecretStore("passphrase must not be empty".into()));
@@ -647,9 +711,8 @@ impl WalletApp {
             }
         }
 
-        let mnemonic = parse_mnemonic(mnemonic_str)?;
         self.secrets
-            .set_with_passphrase(passphrase, mnemonic_str)?;
+            .set_with_passphrase(passphrase, &secret.to_stored())?;
 
         std::fs::create_dir_all(data_dir)?;
 
@@ -657,7 +720,7 @@ impl WalletApp {
             let db_path = meta::db_path(data_dir);
             let mut db =
                 Connection::open(&db_path).map_err(|e| WalletError::Persist(e.to_string()))?;
-            let params = create_params(&mnemonic, network)?;
+            let params = create_params(secret, network)?;
             let mut wallet = PersistedWallet::create(&mut db, params)
                 .map_err(|e| WalletError::Persist(e.to_string()))?;
 
@@ -666,7 +729,8 @@ impl WalletApp {
                 .persist(&mut db)
                 .map_err(|e| WalletError::Persist(e.to_string()))?;
 
-            let meta = WalletMeta::new(network, electrum_url.clone());
+            let mut meta = WalletMeta::new(network, electrum_url.clone());
+            meta.mweb_scheme = mweb_scheme;
             meta::write_meta(data_dir, &meta)?;
             Ok((wallet, db, meta))
         };
@@ -680,7 +744,8 @@ impl WalletApp {
             }
         };
 
-        let mweb = MwebRuntime::open(data_dir, &mnemonic, network).ok();
+        let mweb =
+            MwebRuntime::open(data_dir, secret, network, mweb_scheme.to_master_scheme()).ok();
 
         let mut state = WalletState {
             last_tip_height: wallet.latest_checkpoint().height(),
@@ -691,6 +756,7 @@ impl WalletApp {
             active_electrum_url: None,
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
+            mweb_scheme,
             data_dir: data_dir.to_path_buf(),
             needs_full_scan: meta.needs_full_scan,
             needs_mweb_scan: meta.needs_mweb_scan,
@@ -745,7 +811,14 @@ impl MemoryBackedApp {
         req: CreateWalletRequest,
     ) -> Result<CreateWalletResponse, WalletError> {
         let mnemonic = descriptors::generate_mnemonic()?;
-        let summary = self.create_or_restore(data_dir, &mnemonic, req.network, req.electrum_url)?;
+        let secret = MasterSecret::parse(&mnemonic, None)?;
+        let summary = self.create_or_restore(
+            data_dir,
+            &secret,
+            req.network,
+            req.electrum_url,
+            MwebScheme::default(),
+        )?;
         Ok(CreateWalletResponse { mnemonic, summary })
     }
 
@@ -754,7 +827,14 @@ impl MemoryBackedApp {
         data_dir: &Path,
         req: RestoreWalletRequest,
     ) -> Result<WalletSummary, WalletError> {
-        self.create_or_restore(data_dir, &req.mnemonic, req.network, req.electrum_url)
+        let secret = MasterSecret::parse(&req.mnemonic, req.aezeed_passphrase.as_deref())?;
+        self.create_or_restore(
+            data_dir,
+            &secret,
+            req.network,
+            req.electrum_url,
+            req.mweb_scheme,
+        )
     }
 
     pub fn load(&self, data_dir: &Path) -> Result<WalletSummary, WalletError> {
@@ -762,14 +842,14 @@ impl MemoryBackedApp {
             return Err(WalletError::NotFound);
         }
         let meta = meta::read_meta(data_dir)?;
-        let mnemonic_str = self
+        let stored = self
             .secrets
             .get_mnemonic()?
             .ok_or(WalletError::MissingMnemonic)?;
-        let mnemonic = parse_mnemonic(&mnemonic_str)?;
+        let secret = MasterSecret::from_stored(&stored)?;
         let mut db = Connection::open(meta::db_path(data_dir))
             .map_err(|e| WalletError::Persist(e.to_string()))?;
-        let params = load_params(&mnemonic, meta.network)?;
+        let params = load_params(&secret, meta.network)?;
         let wallet = PersistedWallet::load(&mut db, params)
             .map_err(|e| WalletError::Persist(e.to_string()))?
             .ok_or(WalletError::NotFound)?;
@@ -782,6 +862,7 @@ impl MemoryBackedApp {
             active_electrum_url: None,
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
+            mweb_scheme: meta.mweb_scheme,
             data_dir: data_dir.to_path_buf(),
             needs_full_scan: meta.needs_full_scan,
             needs_mweb_scan: meta.needs_mweb_scan,
@@ -840,9 +921,10 @@ impl MemoryBackedApp {
     fn create_or_restore(
         &self,
         data_dir: &Path,
-        mnemonic_str: &str,
+        secret: &MasterSecret,
         network: WalletNetwork,
         electrum_url: Option<String>,
+        mweb_scheme: MwebScheme,
     ) -> Result<WalletSummary, WalletError> {
         if self.exists(data_dir) {
             if self.secrets.get_mnemonic()?.is_none() {
@@ -851,10 +933,10 @@ impl MemoryBackedApp {
                 return Err(WalletError::AlreadyExists);
             }
         }
-        let mnemonic = parse_mnemonic(mnemonic_str)?;
-        self.secrets.set_mnemonic(mnemonic_str)?;
+        let payload = secret.to_stored();
+        self.secrets.set_mnemonic(&payload)?;
         let stored = self.secrets.get_mnemonic()?;
-        if stored.as_deref() != Some(mnemonic_str) {
+        if stored.as_deref() != Some(payload.as_str()) {
             let _ = self.secrets.delete_mnemonic();
             return Err(WalletError::SecretStore(
                 "secret store did not persist mnemonic".into(),
@@ -864,14 +946,15 @@ impl MemoryBackedApp {
         let db_path = meta::db_path(data_dir);
         let mut db =
             Connection::open(&db_path).map_err(|e| WalletError::Persist(e.to_string()))?;
-        let params = create_params(&mnemonic, network)?;
+        let params = create_params(secret, network)?;
         let mut wallet = PersistedWallet::create(&mut db, params)
             .map_err(|e| WalletError::Persist(e.to_string()))?;
         let _ = wallet.next_unused_address(KeychainKind::External);
         wallet
             .persist(&mut db)
             .map_err(|e| WalletError::Persist(e.to_string()))?;
-        let meta = WalletMeta::new(network, electrum_url);
+        let mut meta = WalletMeta::new(network, electrum_url);
+        meta.mweb_scheme = mweb_scheme;
         meta::write_meta(data_dir, &meta)?;
         let mut state = WalletState {
             last_tip_height: wallet.latest_checkpoint().height(),
@@ -882,6 +965,7 @@ impl MemoryBackedApp {
             active_electrum_url: None,
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
+            mweb_scheme,
             data_dir: data_dir.to_path_buf(),
             needs_full_scan: meta.needs_full_scan,
             needs_mweb_scan: meta.needs_mweb_scan,
@@ -957,10 +1041,15 @@ mod tests {
     #[test]
     fn merge_uses_persisted_confirmed_height() {
         let dir = tempfile::tempdir().unwrap();
-        let mnemonic =
-            parse_mnemonic(&descriptors::generate_mnemonic().unwrap()).unwrap();
-        let mut mweb =
-            MwebRuntime::open(dir.path(), &mnemonic, WalletNetwork::Testnet).unwrap();
+        let secret =
+            MasterSecret::parse(&descriptors::generate_mnemonic().unwrap(), None).unwrap();
+        let mut mweb = MwebRuntime::open(
+            dir.path(),
+            &secret,
+            WalletNetwork::Testnet,
+            MwebScheme::default().to_master_scheme(),
+        )
+        .unwrap();
         mweb.history.record(MwebHistoryEntry {
             id: "wtxid1".into(),
             kind: TxKind::Pegout,

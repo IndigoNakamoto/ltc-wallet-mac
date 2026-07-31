@@ -34,6 +34,8 @@ type CreateWalletResponse = {
 type SyncResult = {
   summary: WalletSummary;
   new_txs: number;
+  electrum_ms: number;
+  mweb_ms: number;
 };
 
 type SendResult = {
@@ -63,10 +65,13 @@ const TX_KIND_LABELS: Record<TxKind, string> = {
   "mweb-receive": "mweb receive",
 };
 
+type MwebScheme = "litecoin-core" | "lip0004" | "mwebd";
+
 type WalletSettings = {
   electrum_url: string;
   litecoin_rpc_url: string | null;
   mweb_peers: string[];
+  mweb_scheme: MwebScheme;
 };
 
 type MwebSyncProgress = {
@@ -170,6 +175,11 @@ const el = {
   txList: document.querySelector<HTMLUListElement>("#tx-list")!,
   txEmpty: document.querySelector<HTMLElement>("#tx-empty")!,
   restoreMnemonic: document.querySelector<HTMLTextAreaElement>("#restore-mnemonic")!,
+  createRestoreHint: document.querySelector<HTMLElement>("#create-restore-hint")!,
+  restoreMwebScheme: document.querySelector<HTMLSelectElement>("#restore-mweb-scheme")!,
+  restoreAezeedPass: document.querySelector<HTMLInputElement>("#restore-aezeed-pass")!,
+  restorePassphrase: document.querySelector<HTMLInputElement>("#restore-passphrase")!,
+  restorePassphrase2: document.querySelector<HTMLInputElement>("#restore-passphrase2")!,
   onboardPassphrase: document.querySelector<HTMLInputElement>("#onboard-passphrase")!,
   onboardPassphrase2: document.querySelector<HTMLInputElement>("#onboard-passphrase2")!,
   unlockPassphrase: document.querySelector<HTMLInputElement>("#unlock-passphrase")!,
@@ -183,6 +193,7 @@ const el = {
   settingsElectrum: document.querySelector<HTMLInputElement>("#settings-electrum")!,
   settingsRpc: document.querySelector<HTMLInputElement>("#settings-rpc")!,
   settingsPeers: document.querySelector<HTMLInputElement>("#settings-peers")!,
+  settingsMwebScheme: document.querySelector<HTMLSelectElement>("#settings-mweb-scheme")!,
   peginAmount: document.querySelector<HTMLInputElement>("#pegin-amount")!,
   mwebSendAddress: document.querySelector<HTMLInputElement>("#mweb-send-address")!,
   mwebSendAmount: document.querySelector<HTMLInputElement>("#mweb-send-amount")!,
@@ -196,6 +207,7 @@ const el = {
   btnCopy: document.querySelector<HTMLButtonElement>("#btn-copy")!,
   btnCopyMweb: document.querySelector<HTMLButtonElement>("#btn-copy-mweb")!,
   btnResyncMweb: document.querySelector<HTMLButtonElement>("#btn-resync-mweb")!,
+  btnApplyMwebScheme: document.querySelector<HTMLButtonElement>("#btn-apply-mweb-scheme")!,
   btnSend: document.querySelector<HTMLButtonElement>("#btn-send")!,
   btnWipe: document.querySelector<HTMLButtonElement>("#btn-wipe")!,
   btnWipeUnlock: document.querySelector<HTMLButtonElement>("#btn-wipe-unlock")!,
@@ -239,6 +251,10 @@ function formatLtc(sats: number): string {
 
 function formatLitoshis(sats: number): string {
   return `(${sats.toLocaleString("en-US")} litoshis)`;
+}
+
+function formatMs(ms: number): string {
+  return ms >= 1_000 ? `${(ms / 1_000).toFixed(1)}s` : `${ms}ms`;
 }
 
 /** Parse LTC decimal string to litoshis. Rejects commas, negatives, >8 decimals. */
@@ -384,7 +400,11 @@ function updateBusyUi() {
   el.btnAddress.disabled = busy;
   el.btnCopy.disabled = busy;
   el.btnSend.disabled = busy;
-  el.btnCreate.disabled = busy;
+  // A filled restore field means the user intends to restore; block Create so
+  // the primary button can't silently generate a fresh wallet instead.
+  const restorePending = el.restoreMnemonic.value.trim().length > 0;
+  el.btnCreate.disabled = busy || restorePending;
+  el.createRestoreHint.hidden = !restorePending;
   el.btnRestore.disabled = busy;
   el.sendAddress.disabled = busy;
   el.sendAmount.disabled = busy || drain;
@@ -606,6 +626,7 @@ async function loadSettings() {
     el.settingsElectrum.value = s.electrum_url;
     el.settingsRpc.value = s.litecoin_rpc_url ?? "";
     el.settingsPeers.value = s.mweb_peers.join(", ");
+    el.settingsMwebScheme.value = s.mweb_scheme ?? "litecoin-core";
   } catch {
     /* ignore */
   }
@@ -767,12 +788,15 @@ async function runSync(opts: { quiet: boolean }): Promise<boolean> {
     await refreshCombined();
     await refreshHistory();
     syncState = "ok";
-    setStatus(
+    const timing =
+      result.mweb_ms > 0
+        ? `${formatMs(result.electrum_ms)} + ${formatMs(result.mweb_ms)} MWEB`
+        : formatMs(result.electrum_ms);
+    const newTxs =
       result.new_txs > 0
-        ? `Synced · ${result.new_txs} new transaction${result.new_txs === 1 ? "" : "s"}`
-        : "Synced",
-      "success",
-    );
+        ? ` · ${result.new_txs} new transaction${result.new_txs === 1 ? "" : "s"}`
+        : "";
+    setStatus(`Synced in ${timing}${newTxs}`, "success");
     return true;
   } catch (e) {
     syncState = "error";
@@ -786,8 +810,16 @@ async function runSync(opts: { quiet: boolean }): Promise<boolean> {
   }
 }
 
+el.restoreMnemonic.addEventListener("input", updateBusyUi);
+
 el.btnCreate.addEventListener("click", async () => {
   if (syncing || sending) return;
+  if (el.restoreMnemonic.value.trim()) {
+    setError(
+      "You entered a recovery phrase — click “Restore wallet” below, or clear the phrase to create a new wallet.",
+    );
+    return;
+  }
   const err = requireMatchingPassphrases(
     el.onboardPassphrase.value,
     el.onboardPassphrase2.value,
@@ -823,12 +855,12 @@ el.btnRestore.addEventListener("click", async () => {
   if (syncing || sending) return;
   const mnemonic = el.restoreMnemonic.value.trim();
   if (!mnemonic) {
-    setError("Enter a mnemonic to restore.");
+    setError("Enter a recovery phrase or extended key to restore.");
     return;
   }
   const err = requireMatchingPassphrases(
-    el.onboardPassphrase.value,
-    el.onboardPassphrase2.value,
+    el.restorePassphrase.value,
+    el.restorePassphrase2.value,
   );
   if (err) {
     setError(err);
@@ -838,15 +870,22 @@ el.btnRestore.addEventListener("click", async () => {
   setError(null);
   updateBusyUi();
   try {
-    const passphrase = el.onboardPassphrase.value;
+    const passphrase = el.restorePassphrase.value;
+    const aezeedPass = el.restoreAezeedPass.value;
     const s = await invoke<WalletSummary>("restore_wallet", {
-      req: { mnemonic, network: "mainnet" },
+      req: {
+        mnemonic,
+        network: "mainnet",
+        mweb_scheme: el.restoreMwebScheme.value as MwebScheme,
+        aezeed_passphrase: aezeedPass ? aezeedPass : null,
+      },
       passphrase,
     });
     renderSummary(s);
-    el.onboardPassphrase.value = "";
-    el.onboardPassphrase2.value = "";
+    el.restorePassphrase.value = "";
+    el.restorePassphrase2.value = "";
     el.restoreMnemonic.value = "";
+    el.restoreAezeedPass.value = "";
     setPhase("ready");
     setView("balance");
     syncing = false;
@@ -930,6 +969,32 @@ el.btnResyncMweb.addEventListener("click", async () => {
     await invoke("resync_mweb");
     await refreshCombined();
     setStatus("MWEB resynced.", "success");
+  } catch (e) {
+    setError(String(e));
+  } finally {
+    stopMwebProgressPolling();
+    syncing = false;
+    updateBusyUi();
+  }
+});
+
+el.btnApplyMwebScheme.addEventListener("click", async () => {
+  if (syncing || sending) return;
+  const scheme = el.settingsMwebScheme.value as MwebScheme;
+  const confirmed = window.confirm(
+    "Switch MWEB derivation scheme and rescan? This wipes local MWEB data and " +
+      "re-downloads the full UTXO set. Transparent funds are untouched.",
+  );
+  if (!confirmed) return;
+  syncing = true;
+  setError(null);
+  updateBusyUi();
+  setStatus("Rescanning MWEB under the new derivation scheme…");
+  startMwebProgressPolling();
+  try {
+    await invoke("set_mweb_scheme", { scheme });
+    await refreshCombined();
+    setStatus("MWEB derivation scheme applied.", "success");
   } catch (e) {
     setError(String(e));
   } finally {

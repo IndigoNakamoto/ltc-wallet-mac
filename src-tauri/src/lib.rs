@@ -218,6 +218,19 @@ async fn resync_mweb(state: State<'_, Arc<WalletApp>>) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+/// Switch the MWEB derivation scheme and rescan under it (wipes local MWEB
+/// state only; transparent wallet data is untouched).
+#[tauri::command]
+async fn set_mweb_scheme(
+    state: State<'_, Arc<WalletApp>>,
+    scheme: wallet_core::MwebScheme,
+) -> Result<(), String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.set_mweb_scheme(scheme).map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Lock-free snapshot of MWEB download progress; pollable while a sync runs.
 #[tauri::command]
 async fn mweb_sync_progress(
@@ -287,6 +300,7 @@ pub fn run() {
             mweb_send_ltc,
             pegout_ltc,
             resync_mweb,
+            set_mweb_scheme,
             mweb_sync_progress,
             get_settings,
             update_settings,

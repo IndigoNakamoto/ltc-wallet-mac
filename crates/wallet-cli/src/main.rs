@@ -21,6 +21,27 @@ impl From<CliNetwork> for WalletNetwork {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, ValueEnum)]
+enum CliMwebScheme {
+    /// Litecoin Core: m/0'/100'/{0,1}'
+    #[default]
+    LitecoinCore,
+    /// LIP-0004: m/1/0/{100',101'}
+    Lip0004,
+    /// mwebd / Nexus: m/1000'/2'/0'/{0,1}'
+    Mwebd,
+}
+
+impl From<CliMwebScheme> for wallet_core::MwebScheme {
+    fn from(value: CliMwebScheme) -> Self {
+        match value {
+            CliMwebScheme::LitecoinCore => Self::LitecoinCore,
+            CliMwebScheme::Lip0004 => Self::Lip0004,
+            CliMwebScheme::Mwebd => Self::Mwebd,
+        }
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "wallet-cli",
@@ -48,7 +69,7 @@ enum Command {
         #[arg(long)]
         electrum: Option<String>,
     },
-    /// Restore a wallet from a mnemonic.
+    /// Restore a wallet from a seed (BIP39/aezeed words or a root xprv/zprv).
     Restore {
         #[arg(long)]
         mnemonic: String,
@@ -56,6 +77,12 @@ enum Command {
         network: CliNetwork,
         #[arg(long)]
         electrum: Option<String>,
+        /// MWEB key-derivation scheme (use mwebd for Nexus seeds).
+        #[arg(long, value_enum, default_value_t = CliMwebScheme::LitecoinCore)]
+        mweb_scheme: CliMwebScheme,
+        /// aezeed cipher-seed passphrase, if one was set.
+        #[arg(long)]
+        aezeed_passphrase: Option<String>,
     },
     /// Print wallet summary JSON.
     Summary,
@@ -76,6 +103,22 @@ enum Command {
     },
     /// List recent transactions.
     History,
+    /// Print the addresses a seed would derive (BIP84 + MWEB under every
+    /// scheme) without creating a wallet. For cross-wallet parity checks.
+    Derive {
+        /// Seed input: BIP39 words, aezeed words, or a root xprv/zprv/Ltpv.
+        /// Read from stdin when omitted (avoids shell history).
+        #[arg(long)]
+        input: Option<String>,
+        #[arg(long, value_enum, default_value_t = CliNetwork::Mainnet)]
+        network: CliNetwork,
+        /// Number of addresses to derive per chain.
+        #[arg(long, default_value_t = 5)]
+        count: u32,
+        /// aezeed cipher-seed passphrase, if one was set (Nexus advanced setting).
+        #[arg(long)]
+        aezeed_passphrase: Option<String>,
+    },
 }
 
 fn read_passphrase(explicit: &Option<String>) -> Result<String> {
@@ -122,6 +165,8 @@ fn main() -> Result<()> {
             mnemonic,
             network,
             electrum,
+            mweb_scheme,
+            aezeed_passphrase,
         } => {
             let passphrase = read_passphrase(&passphrase_opt)?;
             let summary = app
@@ -131,6 +176,8 @@ fn main() -> Result<()> {
                         mnemonic,
                         network: network.into(),
                         electrum_url: electrum,
+                        mweb_scheme: mweb_scheme.into(),
+                        aezeed_passphrase,
                     },
                     &passphrase,
                 )
@@ -176,6 +223,32 @@ fn main() -> Result<()> {
             ensure_loaded(&app, &data_dir, &passphrase_opt)?;
             let txs = app.transactions().context("history")?;
             println!("{}", serde_json::to_string_pretty(&txs)?);
+        }
+        Command::Derive {
+            input,
+            network,
+            count,
+            aezeed_passphrase,
+        } => {
+            let input = match input {
+                Some(i) => i,
+                None => {
+                    eprintln!("Enter seed (words or extended key), then press Enter:");
+                    let mut line = String::new();
+                    std::io::stdin()
+                        .read_line(&mut line)
+                        .context("read seed from stdin")?;
+                    line
+                }
+            };
+            let preview = wallet_core::derive_preview(
+                &input,
+                aezeed_passphrase.as_deref(),
+                network.into(),
+                count,
+            )
+            .context("derive preview")?;
+            println!("{}", serde_json::to_string_pretty(&preview)?);
         }
     }
 

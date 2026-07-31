@@ -39,6 +39,10 @@ pub struct WalletMeta {
     /// LIP-0006 P2P peers (`host:port`).
     #[serde(default = "default_mweb_peers")]
     pub mweb_peers: Vec<String>,
+    /// MWEB key-derivation scheme; wallets from before this field existed
+    /// default to Litecoin Core's layout.
+    #[serde(default)]
+    pub mweb_scheme: crate::dto::MwebScheme,
 }
 
 impl WalletMeta {
@@ -51,6 +55,7 @@ impl WalletMeta {
             needs_mweb_scan: true,
             litecoin_rpc_url: None,
             mweb_peers: default_mweb_peers(),
+            mweb_scheme: crate::dto::MwebScheme::default(),
         }
     }
 }

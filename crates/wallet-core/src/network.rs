@@ -42,4 +42,31 @@ impl WalletNetwork {
     pub fn default_electrum_url(self) -> &'static str {
         self.default_electrum_urls()[0]
     }
+
+    /// Port litecoind listens on for P2P, where LIP-0006 MWEB data is served.
+    pub fn p2p_port(self) -> u16 {
+        match self {
+            Self::Mainnet => 9333,
+            Self::Testnet => 19335,
+        }
+    }
+
+    /// Litecoin Core's DNS seeds, used to find public MWEB-serving peers for
+    /// users who do not run their own node (see `crate::discovery`).
+    pub fn dns_seeds(self) -> &'static [&'static str] {
+        match self {
+            Self::Mainnet => &[
+                "seed-a.litecoin.loshan.co.uk",
+                "dnsseed.thrasher.io",
+                "dnsseed.litecointools.com",
+                "dnsseed.litecoinpool.org",
+                "dnsseed.koin-project.com",
+            ],
+            Self::Testnet => &[
+                "testnet-seed.litecointools.com",
+                "seed-b.litecoin.loshan.co.uk",
+                "dnsseed-testnet.thrasher.io",
+            ],
+        }
+    }
 }

@@ -15,11 +15,10 @@ use bdk_mweb::mweb_sync::{
 };
 use bdk_mweb::MwebCoinDatabase;
 use bdk_mweb::tx_builder::CHANGE_ADDRESS_INDEX;
-use bdk_mweb::{AddressBook, DEFAULT_GAP_LIMIT, MWEB_PEGIN_MATURITY};
+use bdk_mweb::{AddressBook, MWEB_PEGIN_MATURITY};
 use bdk_wallet::bitcoin::consensus::encode::serialize_hex;
 use bdk_wallet::bitcoin::key::Secp256k1;
 use bdk_wallet::bitcoin::{Address, Amount, NetworkKind};
-use bdk_wallet::keys::bip39::Mnemonic;
 use bdk_wallet::rusqlite::Connection;
 use bdk_wallet::{
     extract_prepared_mweb_pegin, MwebStore, PersistedWallet, SignOptions,
@@ -35,6 +34,12 @@ use crate::mweb_history::{now_ts, MwebHistory, MwebHistoryEntry};
 use crate::network::WalletNetwork;
 use crate::rpc;
 
+/// MWEB address-book size. Ownership lookup during scanning is a single map
+/// probe regardless of book size (see `bdk_mweb::scan`), so this is sized for
+/// recovery: coins received at any index below it are found on restore. The
+/// old `DEFAULT_GAP_LIMIT` of 20 silently missed coins at higher indices.
+pub const MWEB_GAP_LIMIT: u32 = 1000;
+
 pub struct MwebRuntime {
     pub store: MwebStore,
     pub keys: MasterKeys,
@@ -49,13 +54,18 @@ pub struct MwebRuntime {
 }
 
 impl MwebRuntime {
-    pub fn open(data_dir: &Path, mnemonic: &Mnemonic, network: WalletNetwork) -> Result<Self, WalletError> {
+    pub fn open(
+        data_dir: &Path,
+        secret: &crate::seed::MasterSecret,
+        network: WalletNetwork,
+        scheme: MasterKeyScheme,
+    ) -> Result<Self, WalletError> {
         let secp = Secp256k1::new();
         let bdk_net = network.to_bitcoin_network();
-        let seed = mnemonic.to_seed("");
-        let keys = MasterKeys::from_seed(&seed, bdk_net, MasterKeyScheme::LitecoinCore, &secp)
+        let master = secret.master_xprv(bdk_net)?;
+        let keys = MasterKeys::from_xprv(&master, scheme, &secp)
             .map_err(|e| WalletError::Mweb(e.to_string()))?;
-        let book = AddressBook::from_keys(&keys, DEFAULT_GAP_LIMIT, &secp)
+        let book = AddressBook::from_keys(&keys, MWEB_GAP_LIMIT, &secp)
             .map_err(|e| WalletError::Mweb(e.to_string()))?;
 
         let store = load_store(data_dir)?;
@@ -116,17 +126,63 @@ impl MwebRuntime {
         network: WalletNetwork,
         progress: Option<Arc<SyncProgress>>,
     ) -> Result<(), WalletError> {
-        if peers.is_empty() {
+        let configured = resolve_peers(peers)?;
+        let mut configured_err = None;
+        if !configured.is_empty() {
+            match self.sync_pass(
+                configured,
+                tip_height,
+                tip_hash,
+                prev_tip_hash,
+                network,
+                progress.clone(),
+            ) {
+                Ok(()) => return Ok(()),
+                Err(e) => configured_err = Some(e),
+            }
+        }
+        // Their own node is absent or down, so fall back to public MWEB peers
+        // from the DNS seeds rather than leaving MWEB dark.
+        let discovered = crate::discovery::discover_mweb_peers(network);
+        if discovered.is_empty() {
             self.stale = true;
-            self.last_status = "no MWEB peers configured".into();
+            self.last_status = match configured_err {
+                Some(e) => format!("MWEB peer unreachable: {e}"),
+                None => "no MWEB peers configured, and none found via DNS seeds".into(),
+            };
             return Ok(());
         }
-        let addrs = resolve_peers(peers)?;
-        if addrs.is_empty() {
-            self.stale = true;
-            self.last_status = format!("could not resolve MWEB peers: {peers:?}");
-            return Ok(());
+        match self.sync_pass(
+            discovered,
+            tip_height,
+            tip_hash,
+            prev_tip_hash,
+            network,
+            progress,
+        ) {
+            Ok(()) => {
+                self.last_status.push_str(" via public peer");
+                Ok(())
+            }
+            Err(e) => {
+                self.stale = true;
+                self.last_status = format!("MWEB peer unreachable: {e}");
+                Ok(())
+            }
         }
+    }
+
+    /// One differential sync attempt against a fixed set of peers.
+    #[allow(clippy::too_many_arguments)]
+    fn sync_pass(
+        &mut self,
+        addrs: Vec<std::net::SocketAddr>,
+        tip_height: u32,
+        tip_hash: bdk_wallet::bitcoin::BlockHash,
+        prev_tip_hash: Option<bdk_wallet::bitcoin::BlockHash>,
+        network: WalletNetwork,
+        progress: Option<Arc<SyncProgress>>,
+    ) -> Result<(), String> {
         let mut pool = PeerPool::new(addrs);
         let syncer = MwebSyncer {
             progress,
@@ -174,11 +230,7 @@ impl MwebRuntime {
                 );
                 Ok(())
             }
-            Err(e) => {
-                self.stale = true;
-                self.last_status = format!("MWEB peer unreachable: {e}");
-                Ok(())
-            }
+            Err(e) => Err(e.to_string()),
         }
     }
 
@@ -278,7 +330,9 @@ pub(crate) fn update_outgoing_confirmations(
         }
         let mut height: Option<u32> = None;
         for id_hex in &entry.output_ids {
-            let Some(id) = decode_output_id(id_hex) else { continue };
+            let Some(id) = decode_output_id(id_hex) else {
+                continue;
+            };
             let coin = db.get(&id).or_else(|| db.get_spent(&id));
             if let Some(h) = coin.and_then(|c| c.block_height) {
                 height = Some(height.map_or(h, |cur| cur.min(h)));
@@ -590,8 +644,8 @@ pub fn pegin(
     if !signed {
         return Err(WalletError::Sign("peg-in not fully signed".into()));
     }
-    let tx =
-        extract_prepared_mweb_pegin(&prepared.psbt).map_err(|e| WalletError::Mweb(e.to_string()))?;
+    let tx = extract_prepared_mweb_pegin(&prepared.psbt)
+        .map_err(|e| WalletError::Mweb(e.to_string()))?;
     // A peg-in tx carries MWEB extension data that Electrum servers reject
     // ("TX decode failed"), so it must take the RPC/P2P path like other MWEB txs.
     broadcast_mweb_tx(&tx, rpc_url, peers, network)?;
@@ -629,24 +683,53 @@ pub fn pegin(
 /// Broadcast a transaction that carries MWEB data (peg-in, peg-out, MWEB send).
 /// Electrum servers cannot relay these, so they never take the Electrum path.
 ///
-/// Prefers litecoind RPC when configured (authoritative error messages), and
-/// falls back to sending the tx over the LIP-0006 P2P connection otherwise.
+/// P2P goes first: a peer relays the tx through the Dandelion++ stem phase,
+/// while litecoind RPC submits it as our own and gives up that origin privacy.
+/// RPC is the fallback when no peer accepts it.
 fn broadcast_mweb_tx(
     tx: &bdk_wallet::bitcoin::Transaction,
     rpc_url: Option<&str>,
     peers: &[String],
     network: WalletNetwork,
 ) -> Result<(), WalletError> {
-    if let Some(url) = rpc_url {
-        let hex = serialize_hex(tx);
-        let _ = rpc::send_raw_transaction(url, &hex)?;
-        return Ok(());
+    let p2p_err = match broadcast_via_p2p(tx, resolve_peers(peers)?, network) {
+        Ok(()) => return Ok(()),
+        Err(e) => e,
+    };
+    // Still prefer a stranger's node over our own RPC: relaying through a peer
+    // we did not author the tx on is the whole point of the P2P path.
+    let discovered = crate::discovery::discover_mweb_peers(network);
+    if !discovered.is_empty() {
+        match broadcast_via_p2p(tx, discovered, network) {
+            Ok(()) => return Ok(()),
+            Err(e) => eprintln!("MWEB broadcast: discovered peers also failed ({e})"),
+        }
     }
-    let addrs = resolve_peers(peers)?;
+    let Some(url) = rpc_url else {
+        return Err(WalletError::Mweb(format!(
+            "could not reach any MWEB peer to broadcast this transaction ({p2p_err}) — \
+             check your connection, or set a Litecoin RPC URL in Settings"
+        )));
+    };
+    match rpc::send_raw_transaction(url, &serialize_hex(tx)) {
+        Ok(_) => {
+            eprintln!("MWEB broadcast: fell back to litecoind RPC ({p2p_err})");
+            Ok(())
+        }
+        Err(rpc_err) => Err(WalletError::Mweb(format!(
+            "could not broadcast over P2P ({p2p_err}) or litecoind RPC ({rpc_err})"
+        ))),
+    }
+}
+
+/// Offer the tx to each peer in turn until one takes it.
+fn broadcast_via_p2p(
+    tx: &bdk_wallet::bitcoin::Transaction,
+    addrs: Vec<std::net::SocketAddr>,
+    network: WalletNetwork,
+) -> Result<(), WalletError> {
     if addrs.is_empty() {
-        return Err(WalletError::Mweb(
-            "cannot broadcast MWEB transaction: configure a Litecoin RPC URL or reachable MWEB P2P peers in Settings".into(),
-        ));
+        return Err(WalletError::Mweb("no MWEB P2P peers reachable".into()));
     }
     let bdk_net = network.to_bitcoin_network();
     let mut last_err = String::from("no MWEB peers reachable");
@@ -673,7 +756,9 @@ fn broadcast_mweb_tx(
             Err(e) => last_err = format!("{addr}: {e}"),
         }
     }
-    Err(WalletError::Mweb(format!("P2P broadcast failed: {last_err}")))
+    Err(WalletError::Mweb(format!(
+        "P2P broadcast failed: {last_err}"
+    )))
 }
 
 pub fn mweb_send(

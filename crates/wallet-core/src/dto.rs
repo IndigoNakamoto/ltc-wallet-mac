@@ -18,13 +18,45 @@ pub struct CreateWalletResponse {
     pub summary: WalletSummary,
 }
 
-/// Request to restore a wallet from an existing mnemonic.
+/// Request to restore a wallet from an existing seed: a BIP39 mnemonic, an
+/// aezeed mnemonic (Nexus), or a root extended private key (xprv/zprv/Ltpv).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RestoreWalletRequest {
+    /// Seed input; the kind is auto-detected. Named `mnemonic` for backward
+    /// compatibility with existing callers.
     pub mnemonic: String,
     pub network: WalletNetwork,
     #[serde(default)]
     pub electrum_url: Option<String>,
+    /// MWEB key-derivation scheme to restore under.
+    #[serde(default)]
+    pub mweb_scheme: MwebScheme,
+    /// aezeed cipher-seed passphrase, when the seed is aezeed and one was set.
+    #[serde(default)]
+    pub aezeed_passphrase: Option<String>,
+}
+
+/// Which BIP32 layout derives the MWEB scan/spend keys.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum MwebScheme {
+    /// Litecoin Core 0.21: `m/0'/100'/{0,1}'`.
+    #[default]
+    LitecoinCore,
+    /// LIP-0004 text: `m/1/0/{100',101'}`.
+    Lip0004,
+    /// mwebd / Nexus (BIP43 purpose 1000): `m/1000'/2'/0'/{0,1}'`.
+    Mwebd,
+}
+
+impl MwebScheme {
+    pub(crate) fn to_master_scheme(self) -> bdk_mweb::keys::MasterKeyScheme {
+        match self {
+            Self::LitecoinCore => bdk_mweb::keys::MasterKeyScheme::LitecoinCore,
+            Self::Lip0004 => bdk_mweb::keys::MasterKeyScheme::Lip0004,
+            Self::Mwebd => bdk_mweb::keys::MasterKeyScheme::Mwebd,
+        }
+    }
 }
 
 /// Snapshot of wallet balances and tip (amounts in litoshis).
@@ -45,6 +77,10 @@ pub struct WalletSummary {
 pub struct SyncResult {
     pub summary: WalletSummary,
     pub new_txs: u32,
+    /// Wall-clock time in the Electrum phase.
+    pub electrum_ms: u64,
+    /// Wall-clock time in the MWEB phase; 0 when MWEB is not active.
+    pub mweb_ms: u64,
 }
 
 /// Request to send litecoin.
@@ -122,6 +158,9 @@ pub struct WalletSettings {
     pub litecoin_rpc_url: Option<String>,
     #[serde(default)]
     pub mweb_peers: Vec<String>,
+    /// Active MWEB key-derivation scheme (changing it requires an MWEB resync).
+    #[serde(default)]
+    pub mweb_scheme: MwebScheme,
 }
 
 /// Request to update wallet settings.

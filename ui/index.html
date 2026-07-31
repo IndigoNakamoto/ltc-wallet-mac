@@ -103,17 +103,57 @@
             <div class="row">
               <button type="button" id="btn-create" class="btn btn-primary">Create wallet</button>
             </div>
+            <p class="hint" id="create-restore-hint" hidden>
+              You entered a recovery phrase below, so creating a new wallet is disabled. Use
+              “Restore wallet”, or clear the phrase to create a fresh one.
+            </p>
           </div>
 
           <div class="card">
             <h2>Restore from backup</h2>
             <p class="lede">
-              Paste your recovery phrase. It is encrypted with the passphrase above.
+              Paste a 12/24-word recovery phrase (BIP39 or Nexus aezeed) or a root
+              extended private key (xprv/zprv/Ltpv).
             </p>
             <label class="field">
-              <span class="field-label">Mnemonic</span>
-              <textarea id="restore-mnemonic" rows="3" class="mono" placeholder="twelve words…"></textarea>
+              <span class="field-label">Recovery phrase or extended key</span>
+              <textarea id="restore-mnemonic" rows="3" class="mono" placeholder="twelve words… / twenty-four words… / zprv…"></textarea>
             </label>
+            <label class="field">
+              <span class="field-label">MWEB derivation</span>
+              <select id="restore-mweb-scheme">
+                <option value="litecoin-core" selected>Litecoin Core (default)</option>
+                <option value="mwebd">Nexus / mwebd</option>
+                <option value="lip0004">LIP-0004</option>
+              </select>
+              <span class="hint">
+                Where the wallet looks for MWEB coins. Pick “Nexus / mwebd” when restoring a
+                Nexus seed; transparent addresses are unaffected.
+              </span>
+            </label>
+            <label class="field">
+              <span class="field-label">Seed passphrase (aezeed only)</span>
+              <input
+                id="restore-aezeed-pass"
+                type="password"
+                autocomplete="off"
+                placeholder="leave empty unless your Nexus seed has one"
+              />
+            </label>
+            <div class="field-grid">
+              <label class="field">
+                <span class="field-label">Passphrase</span>
+                <input id="restore-passphrase" type="password" autocomplete="new-password" />
+              </label>
+              <label class="field">
+                <span class="field-label">Confirm passphrase</span>
+                <input id="restore-passphrase2" type="password" autocomplete="new-password" />
+              </label>
+            </div>
+            <p class="hint">
+              The passphrase encrypts the restored secret on this machine. It is new — not the
+              seed's own passphrase.
+            </p>
             <div class="row">
               <button type="button" id="btn-restore" class="btn btn-secondary">Restore wallet</button>
             </div>
@@ -467,6 +507,24 @@
                 <div class="row">
                   <button type="button" id="btn-resync-mweb" class="btn btn-ghost">Resync MWEB</button>
                 </div>
+                <label class="field">
+                  <span class="field-label">MWEB derivation scheme</span>
+                  <select id="settings-mweb-scheme">
+                    <option value="litecoin-core">Litecoin Core (default)</option>
+                    <option value="mwebd">Nexus / mwebd</option>
+                    <option value="lip0004">LIP-0004</option>
+                  </select>
+                  <span class="hint">
+                    Which BIP32 branch derives your MWEB keys. Changing it wipes local MWEB data
+                    and rescans under the new scheme — coins are re-discovered from the chain,
+                    and transparent funds are untouched.
+                  </span>
+                </label>
+                <div class="row">
+                  <button type="button" id="btn-apply-mweb-scheme" class="btn btn-ghost">
+                    Apply scheme &amp; rescan
+                  </button>
+                </div>
               </div>
             </div>
           </section>
@@ -501,7 +559,7 @@
                   spellcheck="false"
                   placeholder="http://127.0.0.1:9332"
                 />
-                <span class="hint">Optional. MWEB broadcasts fall back to P2P when this is empty.</span>
+                <span class="hint">Optional. Only used if broadcasting over P2P fails.</span>
               </label>
               <label class="field">
                 <span class="field-label">MWEB P2P peers</span>
@@ -512,7 +570,10 @@
                   spellcheck="false"
                   placeholder="127.0.0.1:9333"
                 />
-                <span class="hint">Comma-separated <code>host:port</code> pairs.</span>
+                <span class="hint">
+                  Comma-separated <code>host:port</code> pairs. Optional — public MWEB
+                  peers are found automatically when these are empty or unreachable.
+                </span>
               </label>
               <div class="row">
                 <button type="button" id="btn-save-settings" class="btn btn-primary">Save settings</button>
