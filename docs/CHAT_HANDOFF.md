@@ -52,8 +52,8 @@ See sibling BDK docs (do not vendor):
 ## Next implementation slice
 
 1. ~~Implement `crates/wallet-core` BIP84 descriptor generation + `PersistedWallet` create/load (`rusqlite`).~~
-2. ~~Tiny CLI exercising create → sync → address → send on testnet.~~
-3. ~~Scaffold Tauri; wire commands.~~ Polish UI (send form, clearer balance); then packaging.
+2. ~~Tiny CLI exercising create → sync → address → send (mainnet default; `--network testnet` still available).~~
+3. ~~Scaffold Tauri; wire commands; polish UI; mainnet create/restore default.~~ Next: packaging.
 
 ## Out of scope for v0.1
 

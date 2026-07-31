@@ -33,10 +33,10 @@ impl From<CliNetwork> for WalletNetwork {
 #[derive(Parser, Debug)]
 #[command(
     name = "wallet-cli",
-    about = "Litecoin wallet-core smoke CLI (Electrum testnet)"
+    about = "Litecoin wallet-core smoke CLI (Electrum mainnet by default)"
 )]
 struct Cli {
-    /// Wallet data directory (sqlite + meta).
+    /// Wallet data directory (sqlite + meta + mnemonic file).
     #[arg(long, global = true, default_value = ".wallet-data")]
     data_dir: PathBuf,
 
@@ -48,7 +48,7 @@ struct Cli {
 enum Command {
     /// Create a new BIP84 wallet; prints mnemonic once.
     Create {
-        #[arg(long, value_enum, default_value_t = CliNetwork::Testnet)]
+        #[arg(long, value_enum, default_value_t = CliNetwork::Mainnet)]
         network: CliNetwork,
         #[arg(long)]
         electrum: Option<String>,
@@ -57,7 +57,7 @@ enum Command {
     Restore {
         #[arg(long)]
         mnemonic: String,
-        #[arg(long, value_enum, default_value_t = CliNetwork::Testnet)]
+        #[arg(long, value_enum, default_value_t = CliNetwork::Mainnet)]
         network: CliNetwork,
         #[arg(long)]
         electrum: Option<String>,

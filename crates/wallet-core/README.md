@@ -6,4 +6,4 @@ Public surface: `WalletApp` (`exists` / `create` / `restore` / `load` / `sync` /
 
 BIP84 descriptors + `PersistedWallet` (`rusqlite`); mnemonic via `SecretStore` (file-backed `wallet.mnemonic`, mode 0600). Sync/send use Electrum-LTC (`bdk_electrum`).
 
-Smoke against testnet with `wallet-cli` (see root README).
+Smoke against mainnet with `wallet-cli` (see root README; `--network testnet` optional).

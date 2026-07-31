@@ -215,7 +215,7 @@ el.btnCreate.addEventListener("click", async () => {
   updateBusyUi();
   try {
     const resp = await invoke<CreateWalletResponse>("create_wallet", {
-      req: { network: "testnet" },
+      req: { network: "mainnet" },
     });
     el.mnemonicText.textContent = resp.mnemonic;
     renderSummary(resp.summary);
@@ -241,7 +241,7 @@ el.btnRestore.addEventListener("click", async () => {
   updateBusyUi();
   try {
     const s = await invoke<WalletSummary>("restore_wallet", {
-      req: { mnemonic, network: "testnet" },
+      req: { mnemonic, network: "mainnet" },
     });
     renderSummary(s);
     setPhase("ready");

@@ -33,17 +33,19 @@ npm run tauri dev
 
 Wallet data: `~/Library/Application Support/com.indigonakamoto.ltc-wallet/`.
 
-## Testnet CLI smoke
+## Mainnet CLI smoke
 
 ```bash
 cargo run -p wallet-cli -- --data-dir .wallet-data create
 cargo run -p wallet-cli -- --data-dir .wallet-data address
-# fund the tltc1… address
+# fund the ltc1… address
 cargo run -p wallet-cli -- --data-dir .wallet-data sync
 cargo run -p wallet-cli -- --data-dir .wallet-data send \
-  --address <tltc1…> --amount-sats 5000 --fee-rate 1
+  --address <ltc1…> --amount-sats 5000 --fee-rate 1
 ```
+
+Use `--network testnet` for testnet (`tltc1…`, Electrum `:51002`).
 
 ## Next step
 
-Polish UI screens (send form, clearer balance), then packaging (icon / notarization).
+Packaging (icon / notarization).
