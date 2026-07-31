@@ -4,7 +4,7 @@ members = ["crates/wallet-core", "crates/wallet-cli", "src-tauri"]
 
 [workspace.package]
 edition = "2021"
-rust-version = "1.85.0"
+rust-version = "1.96.0"
 license = "MIT OR Apache-2.0"
 
 # Until crates.io publishes litecoin 0.32.8-rc.2 (matches nested bdk_wallet).
