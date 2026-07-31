@@ -112,7 +112,9 @@ jobs:
             Draft release built by GitHub Actions.
 
             **Install**
-            - macOS: open the `.dmg` (Gatekeeper may warn on unsigned builds — Right-click → Open).
+            - macOS: open the `.dmg` and drag the app to Applications. Builds are unsigned, so
+              macOS claims the app "is damaged" — it isn't. Clear the quarantine flag once with
+              `xattr -cr "/Applications/LTC Wallet.app"`, then launch normally.
             - Linux: prefer the `.AppImage` (`chmod +x` then run), or install the `.deb`.
 
             **Sibling pins** (see `deps/pins.env`)
