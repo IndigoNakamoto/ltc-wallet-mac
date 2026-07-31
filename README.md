@@ -13,7 +13,8 @@ Read [`docs/CHAT_HANDOFF.md`](docs/CHAT_HANDOFF.md). Blueprint: [`docs/ARCHITECT
 ## Expected sibling checkouts
 
 ```text
-../bdk              # branch litecoin (includes nested bdk_wallet)
+../bdk              # branch litecoin
+../bdk/bdk_wallet   # separate repo, cloned inside ../bdk (gitignored there)
 ../rust-litecoin    # litecoin 0.32.8-rc.2 (workspace [patch])
 ```
 

@@ -42,6 +42,8 @@ jobs:
           source ltc-wallet-mac/deps/pins.env
           echo "bdk_repo=$BDK_REPO" >> "$GITHUB_OUTPUT"
           echo "bdk_ref=$BDK_REF" >> "$GITHUB_OUTPUT"
+          echo "bdk_wallet_repo=$BDK_WALLET_REPO" >> "$GITHUB_OUTPUT"
+          echo "bdk_wallet_ref=$BDK_WALLET_REF" >> "$GITHUB_OUTPUT"
           echo "rust_litecoin_repo=$RUST_LITECOIN_REPO" >> "$GITHUB_OUTPUT"
           echo "rust_litecoin_ref=$RUST_LITECOIN_REF" >> "$GITHUB_OUTPUT"
 
@@ -51,6 +53,13 @@ jobs:
           repository: ${{ steps.pins.outputs.bdk_repo }}
           ref: ${{ steps.pins.outputs.bdk_ref }}
           path: bdk
+
+      - name: Checkout bdk_wallet into bdk
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pins.outputs.bdk_wallet_repo }}
+          ref: ${{ steps.pins.outputs.bdk_wallet_ref }}
+          path: bdk/bdk_wallet
 
       - name: Checkout rust-litecoin sibling
         uses: actions/checkout@v4
@@ -108,6 +117,7 @@ jobs:
 
             **Sibling pins** (see `deps/pins.env`)
             - bdk: `${{ steps.pins.outputs.bdk_ref }}`
+            - bdk_wallet: `${{ steps.pins.outputs.bdk_wallet_ref }}`
             - rust-litecoin: `${{ steps.pins.outputs.rust_litecoin_ref }}`
           releaseDraft: true
           prerelease: false
