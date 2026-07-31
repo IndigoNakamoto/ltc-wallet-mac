@@ -1,0 +1,114 @@
+# Build macOS (.app/.dmg) and Linux (.deb/.AppImage) artifacts and attach them
+# to a draft GitHub Release. Trigger via Actions → "Release" → Run workflow,
+# or by pushing to the `release` branch.
+#
+# Sibling path deps are checked out next to this repo using SHAs in deps/pins.env.
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - release
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: ""
+          - platform: ubuntu-22.04
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout wallet
+        uses: actions/checkout@v4
+        with:
+          path: ltc-wallet-mac
+
+      - name: Load sibling pins
+        id: pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source ltc-wallet-mac/deps/pins.env
+          echo "bdk_repo=$BDK_REPO" >> "$GITHUB_OUTPUT"
+          echo "bdk_ref=$BDK_REF" >> "$GITHUB_OUTPUT"
+          echo "rust_litecoin_repo=$RUST_LITECOIN_REPO" >> "$GITHUB_OUTPUT"
+          echo "rust_litecoin_ref=$RUST_LITECOIN_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout bdk sibling
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pins.outputs.bdk_repo }}
+          ref: ${{ steps.pins.outputs.bdk_ref }}
+          path: bdk
+
+      - name: Checkout rust-litecoin sibling
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.pins.outputs.rust_litecoin_repo }}
+          ref: ${{ steps.pins.outputs.rust_litecoin_ref }}
+          path: rust-litecoin
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: ltc-wallet-mac/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85.0"
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ltc-wallet-mac -> target
+
+      - name: Install frontend dependencies
+        working-directory: ltc-wallet-mac
+        run: npm ci
+
+      - name: Build and upload release assets
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: ltc-wallet-mac
+          tagName: v__VERSION__
+          releaseName: "LTC Wallet v__VERSION__"
+          releaseBody: |
+            Draft release built by GitHub Actions.
+
+            **Install**
+            - macOS: open the `.dmg` (Gatekeeper may warn on unsigned builds — Right-click → Open).
+            - Linux: prefer the `.AppImage` (`chmod +x` then run), or install the `.deb`.
+
+            **Sibling pins** (see `deps/pins.env`)
+            - bdk: `${{ steps.pins.outputs.bdk_ref }}`
+            - rust-litecoin: `${{ steps.pins.outputs.rust_litecoin_ref }}`
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

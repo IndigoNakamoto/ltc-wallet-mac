@@ -99,7 +99,8 @@ mod tests {
     }
 }
 
-/// Read `__cookie__:<token>` from the default litecoind mainnet data directory.
+/// Read `__cookie__:<token>` from the default litecoind mainnet data directory
+/// (macOS Application Support, then Linux `~/.litecoin`).
 fn read_default_cookie() -> Option<String> {
     let home = std::env::var_os("HOME")?;
     let home = std::path::PathBuf::from(home);

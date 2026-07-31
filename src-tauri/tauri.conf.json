@@ -24,9 +24,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": ["app", "dmg", "deb", "appimage"],
     "category": "Finance",
-    "shortDescription": "Native Litecoin wallet for macOS",
+    "shortDescription": "Native Litecoin wallet for macOS and Linux",
     "longDescription": "BIP84 transparent Litecoin wallet with Electrum sync and optional MWEB privacy features.",
     "copyright": "Copyright © Indigo Nakamoto",
     "icon": [

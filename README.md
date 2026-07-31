@@ -1,6 +1,6 @@
 # ltc-wallet-mac
 
-Native macOS Litecoin wallet built on the Litecoin BDK fork ([`IndigoNakamoto/bdk`](https://github.com/IndigoNakamoto/bdk) + [`bdk_wallet`](https://github.com/IndigoNakamoto/bdk_wallet)), with a Tauri 2 shell.
+Native Litecoin wallet for macOS and Linux, built on the Litecoin BDK fork ([`IndigoNakamoto/bdk`](https://github.com/IndigoNakamoto/bdk) + [`bdk_wallet`](https://github.com/IndigoNakamoto/bdk_wallet)), with a Tauri 2 shell.
 
 ## Status
 
@@ -17,7 +17,7 @@ Read [`docs/CHAT_HANDOFF.md`](docs/CHAT_HANDOFF.md). Blueprint: [`docs/ARCHITECT
 ../rust-litecoin    # litecoin 0.32.8-rc.2 (workspace [patch])
 ```
 
-Pin exact commits of these siblings in release notes for reproducible builds.
+Pinned SHAs for reproducible CI/release builds live in [`deps/pins.env`](deps/pins.env). Update that file when intentionally bumping siblings.
 
 ## Layout
 
@@ -35,7 +35,12 @@ npm install
 npm run tauri dev
 ```
 
-Wallet data: `~/Library/Application Support/com.indigonakamoto.ltc-wallet/`.
+Wallet data:
+
+| OS | Path |
+| --- | --- |
+| macOS | `~/Library/Application Support/com.indigonakamoto.ltc-wallet/` |
+| Linux | `~/.local/share/com.indigonakamoto.ltc-wallet/` |
 
 Mnemonic is stored encrypted (`wallet.mnemonic.enc`). Existing plaintext `wallet.mnemonic` files are migrated on first unlock.
 
@@ -51,18 +56,23 @@ cargo run -p wallet-cli -- --data-dir .wallet-data --passphrase '…' send \
 
 Use `--network testnet` for testnet. Passphrase can also come from `WALLET_PASSPHRASE`.
 
-## Packaging (macOS)
+## Packaging
 
-1. Icon source: `app-icon.png` (regenerate with `npx tauri icon app-icon.png`).
-2. Unsigned local build (Apple Silicon):
+Icon source: `app-icon.png` (regenerate with `npx tauri icon app-icon.png`).
+
+Bundle targets: macOS `.app` + `.dmg`, Linux `.deb` + `.AppImage`.
+
+### Local macOS build
 
 ```bash
 npm run tauri build
 ```
 
-Artifacts under `src-tauri/target/release/bundle/`.
+Artifacts under `src-tauri/target/release/bundle/` (or the workspace `target/` equivalent). Share the `.dmg`, or zip the `.app`.
 
-3. Signed + notarized release (requires Apple Developer Program):
+Unsigned builds trip Gatekeeper: recipients use Right-click → Open (or Privacy & Security → Open Anyway).
+
+Signed + notarized release (Apple Developer Program):
 
 ```bash
 export APPLE_ID='you@example.com'
@@ -73,6 +83,30 @@ npm run tauri build
 ```
 
 Hardened runtime + network client entitlement are enabled via [`src-tauri/Entitlements.plist`](src-tauri/Entitlements.plist). Universal (x86_64 + arm64) builds are deferred until sibling deps cross-compile cleanly.
+
+### Local Linux build
+
+Build on Linux (not cross from macOS). On Ubuntu/Debian:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+npm install
+npm run tauri build
+```
+
+Share the `.AppImage` (`chmod +x LTC\ Wallet_*.AppImage && ./LTC\ Wallet_*.AppImage`) or install the `.deb` (`sudo dpkg -i …`).
+
+### GitHub Releases (CI)
+
+[`.github/workflows/release.yml`](.github/workflows/release.yml) builds **macOS (Apple Silicon)** and **Linux x64** artifacts and attaches them to a **draft** GitHub Release.
+
+1. Keep [`deps/pins.env`](deps/pins.env) pointed at known-good sibling SHAs.
+2. Push to the `release` branch, or run **Actions → Release → Run workflow**.
+3. Open the draft release, edit notes, publish.
+
+Recipients download from the release assets page — no need to compile.
 
 ## Next step
 
