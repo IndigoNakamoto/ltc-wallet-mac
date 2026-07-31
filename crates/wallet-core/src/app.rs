@@ -195,6 +195,19 @@ impl WalletApp {
             .ok_or_else(|| WalletError::BuildTx("fee_rate_sat_vb must be non-zero".into()))?;
         let amount = Amount::from_sat(req.amount_sats);
 
+        // Litecoin Core `DUST_RELAY_TX_FEE` is 30_000 sat/kvB (10× Bitcoin). rust-litecoin's
+        // default `minimal_non_dust()` still uses 3_000, so enforce the live network floor.
+        let dust_relay = FeeRate::from_sat_per_vb(30)
+            .ok_or_else(|| WalletError::BuildTx("internal dust fee rate".into()))?;
+        let min_non_dust = address.script_pubkey().minimal_non_dust_custom(dust_relay);
+        if amount < min_non_dust {
+            return Err(WalletError::BuildTx(format!(
+                "amount {} litoshis is below the network dust limit ({} litoshis for this address)",
+                req.amount_sats,
+                min_non_dust.to_sat()
+            )));
+        }
+
         let mut tx_builder = state.wallet.build_tx();
         tx_builder.add_recipient(address.script_pubkey(), amount);
         tx_builder.fee_rate(fee_rate);

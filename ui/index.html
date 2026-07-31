@@ -64,11 +64,16 @@
 
         <div class="home-section">
           <h3>Receive</h3>
-          <p class="mono receive-address" id="address"></p>
-          <div class="row">
-            <button type="button" id="btn-copy">Copy</button>
-            <button type="button" id="btn-address">Refresh address</button>
-            <button type="button" id="btn-sync">Sync</button>
+          <div class="receive-row">
+            <canvas id="receive-qr" width="180" height="180" aria-label="Receive address QR code"></canvas>
+            <div class="receive-meta">
+              <p class="mono receive-address" id="address"></p>
+              <div class="row">
+                <button type="button" id="btn-copy">Copy</button>
+                <button type="button" id="btn-address">Refresh address</button>
+                <button type="button" id="btn-sync">Sync</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -81,7 +86,14 @@
             </label>
             <label>
               Amount (litoshis)
-              <input id="send-amount" type="number" min="1" step="1" required />
+              <input
+                id="send-amount"
+                type="number"
+                min="2940"
+                step="1"
+                placeholder="min ~2940 for ltc1"
+                required
+              />
             </label>
             <label>
               Fee rate (sat/vB)

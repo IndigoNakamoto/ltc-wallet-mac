@@ -103,8 +103,30 @@ h3 {
   margin: 0.35rem 0 0;
 }
 
+.receive-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+#receive-qr {
+  display: block;
+  width: 180px;
+  height: 180px;
+  background: #fff;
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.receive-meta {
+  flex: 1;
+  min-width: 12rem;
+}
+
 .receive-address {
   margin: 0 0 0.25rem;
+  word-break: break-all;
 }
 
 .row {

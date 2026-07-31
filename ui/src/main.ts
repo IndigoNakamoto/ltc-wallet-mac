@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import QRCode from "qrcode";
 
 type WalletNetwork = "mainnet" | "testnet";
 
@@ -45,6 +46,7 @@ const el = {
   balanceTip: document.querySelector<HTMLElement>("#balance-tip")!,
   balancePending: document.querySelector<HTMLElement>("#balance-pending")!,
   address: document.querySelector<HTMLElement>("#address")!,
+  receiveQr: document.querySelector<HTMLCanvasElement>("#receive-qr")!,
   status: document.querySelector<HTMLElement>("#status")!,
   lastTxid: document.querySelector<HTMLElement>("#last-txid")!,
   restoreMnemonic: document.querySelector<HTMLTextAreaElement>("#restore-mnemonic")!,
@@ -116,6 +118,29 @@ function updateBusyUi() {
   }
 }
 
+function paymentUri(address: string): string {
+  return `litecoin:${address}`;
+}
+
+async function renderReceiveQr(address: string) {
+  const ctx = el.receiveQr.getContext("2d");
+  if (!address) {
+    ctx?.clearRect(0, 0, el.receiveQr.width, el.receiveQr.height);
+    return;
+  }
+  try {
+    await QRCode.toCanvas(el.receiveQr, paymentUri(address), {
+      errorCorrectionLevel: "M",
+      margin: 2,
+      width: 180,
+      color: { dark: "#000000", light: "#ffffff" },
+    });
+  } catch (e) {
+    ctx?.clearRect(0, 0, el.receiveQr.width, el.receiveQr.height);
+    setError(`QR render failed: ${e}`);
+  }
+}
+
 function renderSummary(s: WalletSummary) {
   el.networkBadge.textContent = s.network;
   el.balanceTotal.textContent = formatLtc(s.total_sats);
@@ -123,6 +148,7 @@ function renderSummary(s: WalletSummary) {
   el.balanceConfirmed.textContent = `Confirmed: ${formatLtc(s.confirmed_sats)}`;
   el.balanceTip.textContent = `Tip height: ${s.tip_height}`;
   el.address.textContent = s.receive_address;
+  void renderReceiveQr(s.receive_address);
 
   const pendingParts: string[] = [];
   if (s.trusted_pending_sats > 0) {
@@ -273,6 +299,7 @@ el.btnAddress.addEventListener("click", async () => {
   try {
     const address = await invoke<string>("get_receive_address");
     el.address.textContent = address;
+    await renderReceiveQr(address);
     el.status.textContent = "receive address refreshed";
   } catch (e) {
     setError(String(e));
@@ -308,8 +335,8 @@ el.sendForm.addEventListener("submit", async (event) => {
     setError("Enter a destination address.");
     return;
   }
-  if (!Number.isFinite(amount_sats) || amount_sats <= 0 || !Number.isInteger(amount_sats)) {
-    setError("Amount must be a positive whole number of litoshis.");
+  if (!Number.isFinite(amount_sats) || amount_sats < 2940 || !Number.isInteger(amount_sats)) {
+    setError("Amount must be an integer ≥ 2940 litoshis (Litecoin dust limit for ltc1).");
     return;
   }
   if (!Number.isFinite(fee_rate_sat_vb) || fee_rate_sat_vb < 1 || !Number.isInteger(fee_rate_sat_vb)) {
