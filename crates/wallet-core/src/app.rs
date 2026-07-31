@@ -16,7 +16,8 @@ use crate::electrum::{self, BATCH_SIZE, STOP_GAP};
 use crate::error::WalletError;
 use crate::meta::{self, WalletMeta};
 use crate::network::WalletNetwork;
-use crate::secrets::{KeyringStore, SecretStore};
+use crate::secrets::{FileSecretStore, SecretStore};
+use crate::MNEMONIC_FILE;
 
 struct WalletState {
     wallet: PersistedWallet<Connection>,
@@ -33,16 +34,10 @@ pub struct WalletApp {
     secrets: Arc<dyn SecretStore>,
 }
 
-impl Default for WalletApp {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl WalletApp {
-    /// Create a wallet app using the macOS Keychain for mnemonic storage.
-    pub fn new() -> Self {
-        Self::with_secrets(Arc::new(KeyringStore::new()))
+    /// Create a wallet app with file-backed mnemonic storage under `data_dir`.
+    pub fn new(data_dir: &Path) -> Self {
+        Self::with_secrets(Arc::new(FileSecretStore::new(data_dir.join(MNEMONIC_FILE))))
     }
 
     /// Create a wallet app with a custom secret store (tests use [`crate::secrets::MemoryStore`]).
@@ -55,6 +50,14 @@ impl WalletApp {
 
     pub fn exists(&self, data_dir: &Path) -> bool {
         meta::wallet_files_exist(data_dir)
+    }
+
+    /// Delete wallet files and mnemonic secret. Safe if already absent.
+    pub fn wipe(&self, data_dir: &Path) -> Result<(), WalletError> {
+        *self.lock_state()? = None;
+        self.secrets.delete_mnemonic()?;
+        meta::remove_wallet_files(data_dir)?;
+        Ok(())
     }
 
     pub fn create(
@@ -84,7 +87,7 @@ impl WalletApp {
         let mnemonic_str = self
             .secrets
             .get_mnemonic()?
-            .ok_or_else(|| WalletError::SecretStore("mnemonic not found in secret store".into()))?;
+            .ok_or(WalletError::MissingMnemonic)?;
         let mnemonic = parse_mnemonic(&mnemonic_str)?;
 
         let mut db = Connection::open(meta::db_path(data_dir))
@@ -239,27 +242,54 @@ impl WalletApp {
         electrum_url: Option<String>,
     ) -> Result<WalletSummary, WalletError> {
         if self.exists(data_dir) {
-            return Err(WalletError::AlreadyExists);
+            // Orphaned DB (files without mnemonic secret) — clear and continue.
+            if self.secrets.get_mnemonic()?.is_none() {
+                self.wipe(data_dir)?;
+            } else {
+                return Err(WalletError::AlreadyExists);
+            }
         }
 
         let mnemonic = parse_mnemonic(mnemonic_str)?;
+
+        // Persist mnemonic first and verify round-trip before creating the DB.
+        self.secrets.set_mnemonic(mnemonic_str)?;
+        let stored = self.secrets.get_mnemonic()?;
+        if stored.as_deref() != Some(mnemonic_str) {
+            let _ = self.secrets.delete_mnemonic();
+            return Err(WalletError::SecretStore(
+                "secret store did not persist mnemonic".into(),
+            ));
+        }
+
         std::fs::create_dir_all(data_dir)?;
 
-        let db_path = meta::db_path(data_dir);
-        let mut db =
-            Connection::open(&db_path).map_err(|e| WalletError::Persist(e.to_string()))?;
-        let params = create_params(&mnemonic, network)?;
-        let mut wallet = PersistedWallet::create(&mut db, params)
-            .map_err(|e| WalletError::Persist(e.to_string()))?;
+        let create_db = || -> Result<(PersistedWallet<Connection>, Connection, WalletMeta), WalletError> {
+            let db_path = meta::db_path(data_dir);
+            let mut db =
+                Connection::open(&db_path).map_err(|e| WalletError::Persist(e.to_string()))?;
+            let params = create_params(&mnemonic, network)?;
+            let mut wallet = PersistedWallet::create(&mut db, params)
+                .map_err(|e| WalletError::Persist(e.to_string()))?;
 
-        let _ = wallet.next_unused_address(KeychainKind::External);
-        wallet
-            .persist(&mut db)
-            .map_err(|e| WalletError::Persist(e.to_string()))?;
+            let _ = wallet.next_unused_address(KeychainKind::External);
+            wallet
+                .persist(&mut db)
+                .map_err(|e| WalletError::Persist(e.to_string()))?;
 
-        let meta = WalletMeta::new(network, electrum_url);
-        meta::write_meta(data_dir, &meta)?;
-        self.secrets.set_mnemonic(mnemonic_str)?;
+            let meta = WalletMeta::new(network, electrum_url.clone());
+            meta::write_meta(data_dir, &meta)?;
+            Ok((wallet, db, meta))
+        };
+
+        let (wallet, db, meta) = match create_db() {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = meta::remove_wallet_files(data_dir);
+                let _ = self.secrets.delete_mnemonic();
+                return Err(e);
+            }
+        };
 
         let mut state = WalletState {
             wallet,

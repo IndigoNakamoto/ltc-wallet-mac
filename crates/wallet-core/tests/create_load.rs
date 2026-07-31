@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use tempfile::tempdir;
 use wallet_core::{
-    CreateWalletRequest, MemoryStore, RestoreWalletRequest, WalletApp, WalletError, WalletNetwork,
+    CreateWalletRequest, MemoryStore, RestoreWalletRequest, SecretStore, WalletApp, WalletError,
+    WalletNetwork,
 };
 
 fn test_app() -> WalletApp {
@@ -141,6 +142,41 @@ fn send_rejects_invalid_address() {
 }
 
 #[test]
+fn create_after_orphaned_db_wipes_and_succeeds() {
+    let dir = tempdir().unwrap();
+    let secrets = Arc::new(MemoryStore::new());
+    let app = WalletApp::with_secrets(Arc::clone(&secrets) as Arc<dyn wallet_core::SecretStore>);
+    app.create(
+        dir.path(),
+        CreateWalletRequest {
+            network: WalletNetwork::Testnet,
+            electrum_url: None,
+        },
+    )
+    .unwrap();
+
+    // Simulate lost mnemonic secret while DB remains.
+    secrets.delete_mnemonic().unwrap();
+    assert!(app.exists(dir.path()));
+    assert!(matches!(
+        app.load(dir.path()).unwrap_err(),
+        WalletError::MissingMnemonic
+    ));
+
+    let app2 = WalletApp::with_secrets(secrets);
+    let resp = app2
+        .create(
+            dir.path(),
+            CreateWalletRequest {
+                network: WalletNetwork::Testnet,
+                electrum_url: None,
+            },
+        )
+        .expect("create after orphan wipe");
+    assert!(resp.summary.receive_address.starts_with("tltc1"));
+}
+
+#[test]
 fn create_marks_needs_full_scan_in_meta() {
     let dir = tempdir().unwrap();
     let app = test_app();
@@ -157,4 +193,21 @@ fn create_marks_needs_full_scan_in_meta() {
     let meta: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(meta_path).unwrap()).unwrap();
     assert_eq!(meta["needs_full_scan"], true);
+}
+
+#[test]
+fn file_secret_store_roundtrip() {
+    use wallet_core::FileSecretStore;
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("wallet.mnemonic");
+    let store = FileSecretStore::new(&path);
+    let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    store.set_mnemonic(phrase).expect("set");
+    let got = store.get_mnemonic().expect("get");
+    assert_eq!(got.as_deref(), Some(phrase));
+    // Fresh store instance must still read the file (process-restart equivalent).
+    let store2 = FileSecretStore::new(&path);
+    assert_eq!(store2.get_mnemonic().unwrap().as_deref(), Some(phrase));
+    store2.delete_mnemonic().expect("delete");
+    assert_eq!(store2.get_mnemonic().unwrap(), None);
 }

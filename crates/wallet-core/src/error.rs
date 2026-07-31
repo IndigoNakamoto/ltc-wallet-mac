@@ -27,6 +27,12 @@ pub enum WalletError {
     #[error("secret store error: {0}")]
     SecretStore(String),
 
+    /// Wallet DB exists but the mnemonic secret is missing (orphaned data).
+    #[error(
+        "mnemonic missing from secret store; reset wallet data and restore from your backup phrase"
+    )]
+    MissingMnemonic,
+
     #[error("metadata error: {0}")]
     Meta(String),
 

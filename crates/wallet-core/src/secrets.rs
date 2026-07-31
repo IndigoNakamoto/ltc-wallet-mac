@@ -1,69 +1,80 @@
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::error::WalletError;
 
-/// Stores the wallet mnemonic outside SQLite (Keychain / in-memory for tests).
+/// Stores the wallet mnemonic outside SQLite.
 pub trait SecretStore: Send + Sync {
     fn set_mnemonic(&self, mnemonic: &str) -> Result<(), WalletError>;
     fn get_mnemonic(&self) -> Result<Option<String>, WalletError>;
     fn delete_mnemonic(&self) -> Result<(), WalletError>;
 }
 
-const KEYRING_SERVICE: &str = "com.indigonakamoto.ltc-wallet";
-const KEYRING_USER: &str = "mnemonic";
-
-/// macOS Keychain-backed mnemonic store.
-pub struct KeyringStore {
-    service: String,
-    user: String,
+/// File-backed mnemonic store (mode `0600`).
+///
+/// Used instead of macOS Keychain for now: `keyring` 3 + security-framework on current
+/// macOS accepts `set_password` but does not persist across `Entry` instances / process
+/// restarts (get returns `NoEntry`). App Support + 0600 matches the "never in sqlite"
+/// boundary until Keychain storage is reliable again.
+pub struct FileSecretStore {
+    path: PathBuf,
 }
 
-impl KeyringStore {
-    pub fn new() -> Self {
-        Self {
-            service: KEYRING_SERVICE.to_string(),
-            user: KEYRING_USER.to_string(),
-        }
+impl FileSecretStore {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
     }
 
-    pub fn with_identity(service: impl Into<String>, user: impl Into<String>) -> Self {
-        Self {
-            service: service.into(),
-            user: user.into(),
-        }
-    }
-
-    fn entry(&self) -> Result<keyring::Entry, WalletError> {
-        keyring::Entry::new(&self.service, &self.user)
-            .map_err(|e| WalletError::SecretStore(e.to_string()))
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 }
 
-impl Default for KeyringStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SecretStore for KeyringStore {
+impl SecretStore for FileSecretStore {
     fn set_mnemonic(&self, mnemonic: &str) -> Result<(), WalletError> {
-        self.entry()?
-            .set_password(mnemonic)
-            .map_err(|e| WalletError::SecretStore(e.to_string()))
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&self.path)
+            .map_err(|e| WalletError::SecretStore(e.to_string()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&self.path, fs::Permissions::from_mode(0o600))
+                .map_err(|e| WalletError::SecretStore(e.to_string()))?;
+        }
+        file.write_all(mnemonic.trim().as_bytes())
+            .map_err(|e| WalletError::SecretStore(e.to_string()))?;
+        file.sync_all()
+            .map_err(|e| WalletError::SecretStore(e.to_string()))?;
+        Ok(())
     }
 
     fn get_mnemonic(&self) -> Result<Option<String>, WalletError> {
-        match self.entry()?.get_password() {
-            Ok(password) => Ok(Some(password)),
-            Err(keyring::Error::NoEntry) => Ok(None),
+        match fs::read_to_string(&self.path) {
+            Ok(contents) => {
+                let trimmed = contents.trim().to_string();
+                if trimmed.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(trimmed))
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(WalletError::SecretStore(e.to_string())),
         }
     }
 
     fn delete_mnemonic(&self) -> Result<(), WalletError> {
-        match self.entry()?.delete_credential() {
+        match fs::remove_file(&self.path) {
             Ok(()) => Ok(()),
-            Err(keyring::Error::NoEntry) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(WalletError::SecretStore(e.to_string())),
         }
     }

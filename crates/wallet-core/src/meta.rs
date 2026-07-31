@@ -64,3 +64,22 @@ pub fn read_meta(data_dir: &Path) -> Result<WalletMeta, WalletError> {
 pub fn wallet_files_exist(data_dir: &Path) -> bool {
     db_path(data_dir).is_file()
 }
+
+/// Remove wallet DB/meta files (and sqlite sidecars). Ignores missing paths.
+pub fn remove_wallet_files(data_dir: &Path) -> Result<(), WalletError> {
+    let db = db_path(data_dir);
+    for path in [
+        db.clone(),
+        PathBuf::from(format!("{}-wal", db.display())),
+        PathBuf::from(format!("{}-shm", db.display())),
+        meta_path(data_dir),
+        data_dir.join(crate::MNEMONIC_FILE),
+    ] {
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(WalletError::Io(e)),
+        }
+    }
+    Ok(())
+}

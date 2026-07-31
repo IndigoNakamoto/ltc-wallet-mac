@@ -18,7 +18,7 @@ ltc-wallet-mac/
   docs/
     CHAT_HANDOFF.md       # short decisions for new Cursor chats
     ARCHITECTURE.md       # this file
-  crates/wallet-core/     # BDK boundary + DTOs + keyring
+  crates/wallet-core/     # BDK boundary + DTOs + file secrets
   src-tauri/              # Tauri app (commands → wallet-core)
   ui/                     # Frontend (receive / balance / send)
 ```
@@ -47,7 +47,7 @@ Sibling checkouts (expected on a dev machine):
 ┌─────────────────▼───────────────────┐
 │  wallet-core                        │
 │  PersistedWallet + Electrum        │
-│  keyring (mnemonic)                 │
+│  FileSecretStore (wallet.mnemonic)  │
 │  (v0.2) MwebStore + LIP peer        │
 └─────────────────┬───────────────────┘
                   │
@@ -102,7 +102,7 @@ impl WalletApp {
 
 - Transparent wallet: `PersistedWallet` + `rusqlite` under  
   `~/Library/Application Support/<bundle-id>/wallet.sqlite`
-- Mnemonic: `keyring` service/account scoped to bundle id (macOS Keychain)
+- Mnemonic: `wallet.mnemonic` beside the DB (mode `0600`); Keychain deferred until reliable
 - v0.2: `MwebStore` beside the wallet (`mweb.db` + optional `mweb_sync.json`) — never merge confidential coins into `IndexedTxGraph`
 
 ### Sync / send internals
@@ -173,7 +173,7 @@ Ops reference: sibling `bdk/docs/MWEB_PEER_OPS.md`, `LITECOIN_E2E.md` (`mainnet_
 
 - Never log mnemonics or descriptors with secrets
 - Clear create-response mnemonic from frontend memory after backup confirm
-- Keychain item access group / service name fixed at ship time
+- Mnemonic file permissions `0600`; Keychain migration later if needed
 - Notarization / hardened runtime: later packaging milestone
 
 ## Implementation order

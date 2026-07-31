@@ -15,7 +15,7 @@ Paste or `@`-reference this file when starting a new Cursor chat in this repo.
   - Litecoin **mainnet** = `Network::Bitcoin`, BIP84 coin type **`2`** → `m/84'/2'/0'`
   - Litecoin **testnet** = `Network::Testnet4`, coin type **`1`** → `m/84'/1'/0'`
 - **Boundary:** UI/Tauri never see BDK types. `wallet-core` exposes serde DTOs only.
-- **Secrets:** Mnemonic via macOS Keychain (`keyring` crate). Never plaintext in SQLite.
+- **Secrets:** Mnemonic in App Support as `wallet.mnemonic` (mode `0600`) via `FileSecretStore`. Keychain/`keyring` was abandoned: set succeeded but did not persist across Entry/process restart on current macOS. Never store mnemonic in SQLite.
 - **Concurrency:** Electrum/BDK calls are blocking → `tauri::async_runtime::spawn_blocking` + `Mutex<WalletState>`.
 - **UX:** No optimistic balance after send — sync, then refresh summary. Explicit fee rate (sat/vB). Label amounts as LTC/litoshis (rust-litecoin may still print “BTC”).
 

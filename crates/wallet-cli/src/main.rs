@@ -81,8 +81,9 @@ enum Command {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let app = WalletApp::new();
     let data_dir = &cli.data_dir;
+    std::fs::create_dir_all(data_dir).with_context(|| format!("create {}", data_dir.display()))?;
+    let app = WalletApp::new(data_dir);
 
     match cli.command {
         Command::Create { network, electrum } => {

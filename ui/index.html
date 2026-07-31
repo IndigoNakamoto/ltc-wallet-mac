@@ -13,6 +13,18 @@
       <p class="phase" id="phase">booting…</p>
       <p class="error" id="error" hidden></p>
 
+      <section id="fatal" class="panel" hidden>
+        <h2>Wallet data problem</h2>
+        <p>
+          Local wallet files exist but the mnemonic secret is missing.
+          If you still have your backup phrase, reset and restore. Otherwise reset and create a new
+          wallet (any funds on the old addresses need the old mnemonic).
+        </p>
+        <div class="row">
+          <button type="button" id="btn-wipe">Reset wallet data</button>
+        </div>
+      </section>
+
       <section id="onboarding" class="panel" hidden>
         <h2>Onboarding</h2>
         <p>Create a new testnet wallet or restore from a mnemonic.</p>
@@ -36,14 +48,52 @@
       </section>
 
       <section id="ready" class="panel" hidden>
-        <h2>Home</h2>
-        <pre id="summary" class="summary"></pre>
-        <div class="row">
-          <button type="button" id="btn-sync">Sync</button>
-          <button type="button" id="btn-address">Receive address</button>
-          <button type="button" id="btn-refresh">Refresh</button>
+        <header class="home-header">
+          <h2>Home</h2>
+          <span class="badge" id="network-badge">testnet</span>
+        </header>
+
+        <div class="home-section">
+          <h3>Balance</h3>
+          <p class="balance-total" id="balance-total">0.00000000 LTC</p>
+          <p class="balance-sats muted" id="balance-sats">(0 litoshis)</p>
+          <p class="balance-detail muted" id="balance-confirmed">Confirmed: 0.00000000 LTC</p>
+          <p class="balance-detail muted" id="balance-tip">Tip height: —</p>
+          <p class="balance-pending muted" id="balance-pending" hidden></p>
         </div>
-        <p id="address" class="mono"></p>
+
+        <div class="home-section">
+          <h3>Receive</h3>
+          <p class="mono receive-address" id="address"></p>
+          <div class="row">
+            <button type="button" id="btn-copy">Copy</button>
+            <button type="button" id="btn-address">Refresh address</button>
+            <button type="button" id="btn-sync">Sync</button>
+          </div>
+        </div>
+
+        <div class="home-section">
+          <h3>Send</h3>
+          <form id="send-form" class="send-form">
+            <label>
+              Address
+              <input id="send-address" type="text" autocomplete="off" spellcheck="false" required />
+            </label>
+            <label>
+              Amount (litoshis)
+              <input id="send-amount" type="number" min="1" step="1" required />
+            </label>
+            <label>
+              Fee rate (sat/vB)
+              <input id="send-fee-rate" type="number" min="1" step="1" value="1" required />
+            </label>
+            <div class="row">
+              <button type="submit" id="btn-send">Send</button>
+            </div>
+          </form>
+          <p class="muted mono" id="last-txid" hidden></p>
+        </div>
+
         <p id="status" class="status"></p>
       </section>
     </main>

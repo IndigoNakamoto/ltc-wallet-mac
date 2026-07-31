@@ -37,8 +37,17 @@ h1 {
 }
 
 h2 {
-  margin: 0 0 0.75rem;
+  margin: 0;
   font-size: 1.25rem;
+}
+
+h3 {
+  margin: 0 0 0.65rem;
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .phase {
@@ -51,6 +60,51 @@ h2 {
   border: 1px solid var(--line);
   padding: 1.25rem 1.35rem 1.5rem;
   margin-bottom: 1rem;
+}
+
+.home-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.home-section {
+  padding: 1rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.home-section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.balance-total {
+  margin: 0;
+  font-size: 1.85rem;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.balance-sats,
+.balance-detail,
+.balance-pending {
+  margin: 0.35rem 0 0;
+}
+
+.receive-address {
+  margin: 0 0 0.25rem;
 }
 
 .row {
@@ -81,24 +135,38 @@ label {
   gap: 0.35rem;
   color: var(--muted);
   font-size: 0.95rem;
+  margin-bottom: 0.75rem;
 }
 
-textarea {
+textarea,
+input[type="text"],
+input[type="number"] {
   width: 100%;
   font: inherit;
   padding: 0.6rem 0.7rem;
   border: 1px solid var(--line);
   background: #fff;
+  color: var(--ink);
+}
+
+textarea {
   resize: vertical;
 }
 
-.summary,
+.send-form .row {
+  margin-bottom: 0;
+}
+
 #mnemonic-text,
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.85rem;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.muted {
+  color: var(--muted);
 }
 
 .error {
@@ -109,4 +177,9 @@ textarea {
 .status {
   color: var(--muted);
   min-height: 1.25rem;
+  margin: 0.75rem 0 0;
+}
+
+#last-txid {
+  margin: 0.5rem 0 0;
 }

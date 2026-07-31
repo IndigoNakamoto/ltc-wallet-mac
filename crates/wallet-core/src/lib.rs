@@ -18,4 +18,7 @@ pub use dto::{
 };
 pub use error::WalletError;
 pub use network::WalletNetwork;
-pub use secrets::{KeyringStore, MemoryStore, SecretStore};
+pub use secrets::{FileSecretStore, MemoryStore, SecretStore};
+
+/// Filename for the file-backed mnemonic store under the wallet data directory.
+pub const MNEMONIC_FILE: &str = "wallet.mnemonic";

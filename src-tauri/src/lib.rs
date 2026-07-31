@@ -102,10 +102,27 @@ async fn send_ltc(
         .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn wipe_wallet(
+    app: AppHandle,
+    state: State<'_, Arc<WalletApp>>,
+) -> Result<(), String> {
+    let dir = data_dir(&app)?;
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.wipe(&dir).map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(Arc::new(WalletApp::new()))
+        .setup(|app| {
+            let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(&dir)?;
+            app.manage(Arc::new(WalletApp::new(&dir)));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             wallet_exists,
             create_wallet,
@@ -115,6 +132,7 @@ pub fn run() {
             get_summary,
             get_receive_address,
             send_ltc,
+            wipe_wallet,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

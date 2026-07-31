@@ -19,7 +19,7 @@ Read [`docs/CHAT_HANDOFF.md`](docs/CHAT_HANDOFF.md). Blueprint: [`docs/ARCHITECT
 
 | Path | Role |
 | --- | --- |
-| `crates/wallet-core` | BDK boundary, DTOs, Keychain, Electrum |
+| `crates/wallet-core` | BDK boundary, DTOs, secrets file, Electrum |
 | `crates/wallet-cli` | Smoke CLI: create → sync → address → send |
 | `src-tauri` | Tauri 2 commands → `wallet-core` |
 | `ui` | Minimal onboarding / home UI |
