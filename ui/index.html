@@ -24,7 +24,9 @@
     <script type="module" src="/src/main.ts" defer></script>
   </head>
   <body>
-    <div class="auth" id="auth-shell">
+    <div class="backdrop" aria-hidden="true"></div>
+
+    <div class="auth" id="auth-shell" data-tauri-drag-region>
       <div class="auth-inner">
         <div class="brand brand-lg">
           <span class="brand-mark" aria-hidden="true">Ł</span>
@@ -172,7 +174,7 @@
     </div>
 
     <div class="app" id="ready" hidden>
-      <aside class="nav">
+      <aside class="nav" data-tauri-drag-region>
         <div class="brand">
           <span class="brand-mark" aria-hidden="true">Ł</span>
           <span class="brand-text nav-label">LTC Wallet</span>
@@ -275,7 +277,7 @@
       </aside>
 
       <div class="content">
-        <header class="topbar">
+        <header class="topbar" data-tauri-drag-region>
           <h2 class="topbar-title" id="view-title">Balance</h2>
           <div class="topbar-actions">
             <span class="sync-dot" id="sync-dot" data-state="idle" title="Idle"></span>

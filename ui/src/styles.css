@@ -1,47 +1,103 @@
 /* ---------------------------------------------------------------------------
-   Tokens
+   Fonts
+   --------------------------------------------------------------------------- */
+
+@font-face {
+  font-family: "Satoshi Variable";
+  src: url("./fonts/Satoshi-Variable.ttf") format("truetype-variations");
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---------------------------------------------------------------------------
+   Tokens — Nexus "glass" design language
+   (gradient stops, glass border and fills lifted from nexus@glass)
    --------------------------------------------------------------------------- */
 
 :root {
-  --font-sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Satoshi Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-lg: 14px;
+  --radius-sm: 9px;
+  --radius: 13px;
+  --radius-lg: 20px;
 
   --nav-w: 15rem;
   --nav-w-rail: 4.5rem;
 
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Liquid-glass recipe shared by both themes. */
+  --glass-blur: blur(18px) saturate(1.5);
+  --glass-fill: rgba(255, 255, 255, 0.12);
+  --glass-fill-hover: rgba(255, 255, 255, 0.2);
+  --glass-hairline: rgba(255, 255, 255, 0.24);
+  --glass-ring: linear-gradient(
+    180deg,
+    rgba(238, 235, 235, 0.67),
+    rgba(227, 223, 223, 0.06) 49%,
+    rgba(216, 210, 210, 0.25)
+  );
+  --glass-shadow: 0 2px 4px rgba(0, 0, 0, 0.07), 0 14px 34px -14px rgba(0, 0, 0, 0.35);
+
+  /* Text sitting directly on the gradient / clear glass. */
+  --text-glass-1: #ffffff;
+  --text-glass-2: rgba(255, 255, 255, 0.78);
+  --text-glass-3: rgba(255, 255, 255, 0.55);
+
+  /* The Nexus hero scene: horizontally stretched ellipse, near-black core. */
+  --hero-gradient: radial-gradient(
+    160% 145% at 50% -35%,
+    #000001 0%,
+    #08208a 28.5%,
+    #1249ea 50.3%,
+    #60a2f9 75.6%,
+    #8fbcfb 100%
+  );
 }
 
 :root,
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #0d1117;
-  --surface-1: #141b24;
-  --surface-2: #1a222d;
-  --surface-3: #212b37;
-  --border: #283340;
-  --border-strong: #3a4655;
+  --bg: #04060d;
+  --backdrop-gradient: radial-gradient(
+    160% 130% at 50% -20%,
+    #000001 0%,
+    #030b2e 38%,
+    #08208a 78%,
+    #1249ea 100%
+  );
 
-  --text-1: #e7edf5;
-  --text-2: #97a4b6;
-  --text-3: #6a7686;
+  /* Sheet surfaces (cards) — dark equivalent of the #f7f7f7 sheet. */
+  --surface-1: #15181f;
+  --surface-2: #1d212b;
+  --surface-3: #272c38;
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.18);
 
-  --accent: #5b8dd9;
-  --accent-hover: #74a0e4;
-  --accent-ink: #0b1220;
-  --accent-soft: rgba(91, 141, 217, 0.14);
+  --text-1: #eef1f6;
+  --text-2: #a3adba;
+  --text-3: #747e87;
 
-  --success: #4bc48d;
-  --danger: #f0736f;
-  --danger-soft: rgba(240, 115, 111, 0.13);
+  --accent: #60a2f9;
+  --accent-hover: #7fb4fb;
+  --accent-ink: #071021;
+  --accent-soft: rgba(96, 162, 249, 0.16);
+
+  --success: #20bb74;
+  --danger: #f25246;
+  --danger-soft: rgba(242, 82, 70, 0.14);
   --warning: #e0a545;
 
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  /* Smoked glass for panels that carry text (auth, toast). */
+  --panel-bg: rgba(11, 15, 27, 0.55);
+  /* Clear glass for chrome sitting on the gradient (nav, topbar). */
+  --chrome-bg: rgba(9, 13, 26, 0.32);
+
+  --shadow-1: 0 2px 4px rgba(0, 0, 0, 0.35);
   --shadow-2: 0 14px 34px -12px rgba(0, 0, 0, 0.7);
   --skeleton: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
 }
@@ -49,30 +105,44 @@
 :root[data-theme="light"] {
   color-scheme: light;
 
-  --bg: #f4f6f9;
-  --surface-1: #ffffff;
-  --surface-2: #f1f4f8;
-  --surface-3: #e7ecf3;
-  --border: #dce2ea;
-  --border-strong: #bfc9d6;
+  --bg: #071747;
+  --backdrop-gradient: radial-gradient(
+    160% 130% at 50% -20%,
+    #000001 0%,
+    #08208a 30%,
+    #1249ea 58%,
+    #60a2f9 88%,
+    #8fbcfb 100%
+  );
 
-  --text-1: #141d28;
-  --text-2: #5a6775;
-  --text-3: #8b96a4;
+  /* The Nexus sheet. */
+  --surface-1: #f7f7f7;
+  --surface-2: #ffffff;
+  --surface-3: #eceef1;
+  --border: rgba(214, 216, 218, 0.6);
+  --border-strong: #c6cbd1;
 
-  --accent: #345d9d;
-  --accent-hover: #294c85;
+  --text-1: #212124;
+  --text-2: #4f5760;
+  --text-3: #747e87;
+
+  --accent: #1162e6;
+  --accent-hover: #0d53c7;
   --accent-ink: #ffffff;
-  --accent-soft: rgba(52, 93, 157, 0.1);
+  --accent-soft: rgba(17, 98, 230, 0.1);
 
-  --success: #1f8a5c;
-  --danger: #c0392f;
-  --danger-soft: rgba(192, 57, 47, 0.09);
-  --warning: #9a6a12;
+  --success: #20bb74;
+  --danger: #f25246;
+  --danger-soft: rgba(242, 82, 70, 0.1);
+  --warning: #b7791f;
 
-  --shadow-1: 0 1px 2px rgba(20, 29, 40, 0.06);
-  --shadow-2: 0 14px 34px -14px rgba(20, 29, 40, 0.28);
-  --skeleton: linear-gradient(90deg, var(--surface-2), var(--surface-3), var(--surface-2));
+  /* Frosted white glass for text panels; clear glass for chrome. */
+  --panel-bg: rgba(255, 255, 255, 0.62);
+  --chrome-bg: rgba(255, 255, 255, 0.09);
+
+  --shadow-1: 0 2px 4px rgba(0, 0, 0, 0.07);
+  --shadow-2: 0 18px 40px -18px rgba(4, 12, 60, 0.5);
+  --skeleton: linear-gradient(90deg, var(--surface-3), #f2f4f7, var(--surface-3));
 }
 
 /* ---------------------------------------------------------------------------
@@ -104,11 +174,19 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Full-window gradient scene; every glass surface blurs this. */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: var(--backdrop-gradient) no-repeat, var(--bg);
+}
+
 h1,
 h2,
 h3 {
   margin: 0;
-  letter-spacing: -0.011em;
+  letter-spacing: -0.02em;
 }
 
 h1 {
@@ -200,6 +278,49 @@ code {
 }
 
 /* ---------------------------------------------------------------------------
+   Glass surfaces
+   --------------------------------------------------------------------------- */
+
+/* Rounded panels get the Nexus hairline: a gradient ring masked to 1px. */
+.auth .card::before,
+.toast::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: var(--glass-ring);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.auth .card,
+.toast {
+  position: relative;
+  background: var(--panel-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 0;
+  box-shadow: var(--glass-shadow);
+}
+
+/* Solid-ish fallback when backdrop-filter is unavailable. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .auth .card,
+  .toast {
+    background: var(--surface-1);
+  }
+
+  .nav,
+  .topbar {
+    background: rgba(6, 16, 56, 0.72);
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Brand
    --------------------------------------------------------------------------- */
 
@@ -217,9 +338,10 @@ code {
   flex: 0 0 auto;
   width: 2rem;
   height: 2rem;
-  border-radius: 9px;
-  background: linear-gradient(150deg, var(--accent-hover), var(--accent));
-  color: var(--accent-ink);
+  border-radius: 10px;
+  background: linear-gradient(150deg, #60a2f9, #1162e6);
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.35);
+  color: #fff;
   font-size: 1.05rem;
   font-weight: 700;
   line-height: 1;
@@ -235,25 +357,27 @@ code {
 .brand-lg .brand-mark {
   width: 2.6rem;
   height: 2.6rem;
-  border-radius: 12px;
+  border-radius: 13px;
   font-size: 1.4rem;
 }
 
 .phase {
-  color: var(--text-3);
+  color: var(--text-glass-3);
   font-size: 0.85rem;
 }
 
 /* ---------------------------------------------------------------------------
    Auth shell (boot / onboarding / unlock / migrate / mnemonic / fatal)
+   Panels float as frosted glass on the gradient scene.
    --------------------------------------------------------------------------- */
 
 .auth {
   display: flex;
   justify-content: center;
   min-height: 100%;
-  padding: clamp(1.25rem, 6vh, 4rem) 1.25rem 3rem;
+  padding: clamp(1.75rem, 7vh, 4.5rem) 1.25rem 3rem;
   overflow-y: auto;
+  color: var(--text-glass-1);
 }
 
 .auth-inner {
@@ -262,6 +386,18 @@ code {
   gap: 1.25rem;
   width: 100%;
   max-width: 30rem;
+}
+
+.auth .card {
+  color: var(--text-1);
+}
+
+.auth .error {
+  background: rgba(4, 6, 14, 0.5);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-color: rgba(242, 82, 70, 0.65);
+  color: #ffb9b2;
 }
 
 #onboarding,
@@ -289,10 +425,14 @@ code {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
-  padding: 1.1rem 0.75rem;
-  background: var(--surface-1);
-  border-right: 1px solid var(--border);
+  /* Top padding clears the macOS traffic lights (overlay titlebar). */
+  padding: 2.6rem 0.75rem 1.1rem;
+  background: var(--chrome-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-right: 1px solid var(--glass-hairline);
   overflow: hidden;
+  color: var(--text-glass-1);
 }
 
 .nav > .brand {
@@ -302,7 +442,7 @@ code {
 .nav-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
 }
 
@@ -310,31 +450,34 @@ code {
   display: flex;
   align-items: center;
   gap: 0.7rem;
-  padding: 0.55rem 0.6rem;
+  padding: 0.55rem 0.75rem;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   background: transparent;
-  color: var(--text-2);
+  color: var(--text-glass-2);
   font: inherit;
   font-weight: 520;
   text-align: left;
   cursor: pointer;
   user-select: none;
-  transition: background 0.12s var(--ease), color 0.12s var(--ease);
+  transition: background 0.12s var(--ease), color 0.12s var(--ease), box-shadow 0.12s var(--ease);
 }
 
 .nav-item:hover {
-  background: var(--surface-2);
-  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-glass-1);
 }
 
+/* Active tab: Nexus glass fill + hairline. */
 .nav-item[aria-selected="true"] {
-  background: var(--accent-soft);
-  color: var(--accent);
+  background: var(--glass-fill);
+  color: var(--text-glass-1);
+  box-shadow: inset 0 0.5px 0 rgba(238, 235, 235, 0.67), inset 0 0 0 0.5px rgba(216, 210, 210, 0.3),
+    0 2px 4px rgba(0, 0, 0, 0.07);
 }
 
 .nav-item:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid rgba(255, 255, 255, 0.8);
   outline-offset: 1px;
 }
 
@@ -358,8 +501,11 @@ code {
   gap: 1rem;
   flex: 0 0 auto;
   padding: 0.85rem 1.5rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg);
+  border-bottom: 1px solid var(--glass-hairline);
+  background: var(--chrome-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  color: var(--text-glass-1);
 }
 
 .topbar-title {
@@ -375,11 +521,33 @@ code {
   gap: 0.6rem;
 }
 
+/* Chrome buttons and badges become clear glass pills with white ink. */
+.topbar .btn-secondary,
+.topbar .btn-ghost {
+  background: var(--glass-fill);
+  border-color: transparent;
+  box-shadow: inset 0 0.5px 0 rgba(238, 235, 235, 0.67), inset 0 0 0 0.5px rgba(216, 210, 210, 0.3);
+  color: var(--text-glass-1);
+}
+
+.topbar .btn-secondary:hover:not(:disabled),
+.topbar .btn-ghost:hover:not(:disabled) {
+  background: var(--glass-fill-hover);
+  color: var(--text-glass-1);
+}
+
+.topbar .badge {
+  background: var(--glass-fill);
+  border-color: transparent;
+  box-shadow: inset 0 0 0 0.5px rgba(216, 210, 210, 0.35);
+  color: var(--text-glass-2);
+}
+
 .sync-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--text-3);
+  background: var(--text-glass-3);
   flex: 0 0 auto;
 }
 
@@ -392,7 +560,7 @@ code {
 }
 
 .sync-dot[data-state="busy"] {
-  background: var(--accent);
+  background: #8fbcfb;
   animation: pulse 1.1s ease-in-out infinite;
 }
 
@@ -423,14 +591,14 @@ code {
 }
 
 /* ---------------------------------------------------------------------------
-   Cards
+   Cards — the Nexus "sheet" surface
    --------------------------------------------------------------------------- */
 
 .card {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
-  padding: 1.1rem 1.25rem 1.25rem;
+  padding: 1.15rem 1.3rem 1.3rem;
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -442,37 +610,61 @@ code {
   box-shadow: none;
 }
 
+/* The hero balance card carries the Nexus gradient scene itself. */
 .card-hero {
+  position: relative;
   gap: 0.3rem;
-  padding: 1.35rem 1.25rem 1.4rem;
-  background: linear-gradient(160deg, var(--surface-2), var(--surface-1) 60%);
+  padding: 1.5rem 1.4rem 1.55rem;
+  background: var(--hero-gradient);
+  border: 0;
+  box-shadow: var(--glass-shadow);
+  color: var(--text-glass-1);
+  overflow: hidden;
+}
+
+.card-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: var(--glass-ring);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
 }
 
 .hero-label {
-  color: var(--text-3);
+  color: var(--text-glass-2);
   font-size: 0.78rem;
   font-weight: 560;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
+.card-hero .hero-label {
+  color: rgba(255, 255, 255, 0.72);
+}
+
 .balance-total {
-  font-size: clamp(1.75rem, 4.5vw, 2.4rem);
-  font-weight: 640;
-  letter-spacing: -0.025em;
+  font-size: clamp(1.85rem, 4.5vw, 2.5rem);
+  font-weight: 540;
+  letter-spacing: -0.024em;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
 }
 
 .balance-sats {
-  color: var(--text-3);
+  color: rgba(255, 255, 255, 0.66);
   font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
 }
 
 .balance-note {
   margin-top: 0.55rem;
-  color: var(--warning);
+  color: #ffd88a;
   font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
 }
@@ -483,6 +675,16 @@ code {
   background-size: 200% 100%;
   animation: shimmer 1.4s linear infinite;
   color: transparent;
+}
+
+.card-hero .skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.14),
+    rgba(255, 255, 255, 0.3),
+    rgba(255, 255, 255, 0.14)
+  );
+  background-size: 200% 100%;
 }
 
 @keyframes shimmer {
@@ -505,6 +707,7 @@ code {
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
 }
 
 .stat-label {
@@ -522,7 +725,7 @@ code {
 }
 
 /* ---------------------------------------------------------------------------
-   Buttons
+   Buttons — pill-shaped, Nexus blue primary
    --------------------------------------------------------------------------- */
 
 .btn {
@@ -530,9 +733,9 @@ code {
   align-items: center;
   justify-content: center;
   gap: 0.45rem;
-  padding: 0.5rem 0.9rem;
+  padding: 0.5rem 1rem;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border-radius: 999px;
   background: transparent;
   color: var(--text-1);
   font: inherit;
@@ -560,6 +763,7 @@ code {
 .btn-primary {
   background: var(--accent);
   color: var(--accent-ink);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.07);
 }
 
 .btn-primary:hover:not(:disabled) {
@@ -630,11 +834,12 @@ code {
 input[type="text"],
 input[type="number"],
 input[type="password"],
-textarea {
+textarea,
+select {
   width: 100%;
-  padding: 0.55rem 0.7rem;
+  padding: 0.55rem 0.8rem;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   background: var(--surface-2);
   color: var(--text-1);
   font: inherit;
@@ -653,7 +858,8 @@ textarea::placeholder {
 }
 
 input:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-soft);
@@ -704,7 +910,7 @@ textarea {
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.15rem 0.5rem;
+  padding: 0.15rem 0.55rem;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: var(--surface-2);
@@ -758,7 +964,7 @@ textarea {
 .receive-address {
   padding: 0.55rem 0.7rem;
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   background: var(--surface-2);
   line-height: 1.45;
   word-break: break-all;
@@ -816,7 +1022,7 @@ textarea {
   height: 100%;
   width: 0%;
   border-radius: 999px;
-  background: var(--accent);
+  background: linear-gradient(90deg, #1162e6, #60a2f9);
   transition: width 0.3s var(--ease);
 }
 
@@ -825,7 +1031,7 @@ textarea {
 }
 
 /* ---------------------------------------------------------------------------
-   History
+   History — Nexus glass tx rows
    --------------------------------------------------------------------------- */
 
 .tx-list {
@@ -841,32 +1047,37 @@ textarea {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.9rem;
-  padding: 0.7rem 0;
-  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 0;
+  border-bottom: 1px solid rgba(214, 216, 218, 0.3);
+}
+
+:root[data-theme="dark"] .tx-row {
+  border-bottom-color: rgba(255, 255, 255, 0.07);
 }
 
 .tx-row:last-child {
   border-bottom: 0;
 }
 
+/* Nexus rows: received = accent-blue circle, sent = ink circle. */
 .tx-icon {
   display: grid;
   place-items: center;
-  width: 2rem;
-  height: 2rem;
+  width: 2.1rem;
+  height: 2.1rem;
   border-radius: 50%;
   background: var(--surface-3);
   color: var(--text-2);
 }
 
 .tx-icon.in {
-  background: rgba(75, 196, 141, 0.14);
-  color: var(--success);
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .tx-icon.out {
-  background: var(--danger-soft);
-  color: var(--danger);
+  background: var(--text-1);
+  color: var(--surface-1);
 }
 
 .tx-main {
@@ -882,7 +1093,7 @@ textarea {
 }
 
 .tx-amt.in {
-  color: var(--success);
+  color: var(--accent);
 }
 
 .tx-meta,
@@ -905,7 +1116,7 @@ textarea {
 }
 
 .pill {
-  padding: 0.1rem 0.45rem;
+  padding: 0.1rem 0.5rem;
   border-radius: 999px;
   background: var(--surface-3);
   color: var(--text-2);
@@ -929,7 +1140,7 @@ textarea {
 }
 
 /* ---------------------------------------------------------------------------
-   Toast
+   Toast — floating glass capsule
    --------------------------------------------------------------------------- */
 
 .toast-region {
@@ -950,10 +1161,8 @@ textarea {
   gap: 0.6rem;
   max-width: min(38rem, 100%);
   padding: 0.5rem 0.5rem 0.5rem 0.9rem;
-  border: 1px solid var(--border-strong);
   border-radius: 999px;
-  background: var(--surface-3);
-  box-shadow: var(--shadow-2);
+  color: var(--text-1);
   pointer-events: auto;
   animation: toast-in 0.18s var(--ease);
 }
@@ -982,7 +1191,7 @@ textarea {
 }
 
 .toast[data-kind="error"] {
-  border-color: var(--danger);
+  box-shadow: var(--glass-shadow), inset 0 0 0 1px rgba(242, 82, 70, 0.55);
 }
 
 .toast-msg {
@@ -1008,7 +1217,7 @@ textarea {
 }
 
 .toast-close:hover {
-  background: var(--surface-1);
+  background: var(--surface-3);
   color: var(--text-1);
 }
 
@@ -1028,7 +1237,7 @@ textarea {
 
   .nav {
     align-items: center;
-    padding: 1.1rem 0.5rem;
+    padding: 2.6rem 0.5rem 1.1rem;
   }
 
   .nav > .brand {
@@ -1067,9 +1276,10 @@ textarea {
     flex-direction: row;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.5rem 0.75rem;
+    /* Left padding clears the traffic lights once the nav becomes a top bar. */
+    padding: 0.5rem 0.75rem 0.5rem 4.5rem;
     border-right: 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--glass-hairline);
   }
 
   .nav-list {
