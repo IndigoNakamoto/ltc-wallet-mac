@@ -39,6 +39,10 @@ jobs:
 
     runs-on: ${{ matrix.platform }}
 
+    env:
+      # secrets.* is not allowed in step-level `if:`; surface the check as env.
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+
     steps:
       - name: Checkout wallet
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -117,7 +121,7 @@ jobs:
       # the Tauri bundler treats an empty APPLE_CERTIFICATE as "try to sign".
       - name: Build and upload release assets (signed macOS)
         id: build_signed
-        if: matrix.platform == 'macos-latest' && secrets.APPLE_CERTIFICATE != ''
+        if: matrix.platform == 'macos-latest' && env.HAS_APPLE_CERT == 'true'
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -151,7 +155,7 @@ jobs:
 
       - name: Build and upload release assets (unsigned)
         id: build_unsigned
-        if: matrix.platform != 'macos-latest' || secrets.APPLE_CERTIFICATE == ''
+        if: matrix.platform != 'macos-latest' || env.HAS_APPLE_CERT != 'true'
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
