@@ -16,21 +16,19 @@ use bdk_mweb::mweb_sync::{
 };
 use bdk_mweb::p2p::MwebLeafset;
 use bdk_mweb::pmmr::verify_leafset;
-use bdk_mweb::MwebCoinDatabase;
 use bdk_mweb::tx_builder::CHANGE_ADDRESS_INDEX;
-use bdk_mweb::{AddressBook, ChangeSet, MWEB_PEGIN_MATURITY};
-use bdk_wallet::chain::Merge;
+use bdk_mweb::MwebCoinDatabase;
+use bdk_mweb::{AddressBook, ChangeSet, SealContext, MWEB_PEGIN_MATURITY};
 use bdk_wallet::bitcoin::consensus::encode::serialize_hex;
 use bdk_wallet::bitcoin::key::Secp256k1;
 use bdk_wallet::bitcoin::{Address, Amount, NetworkKind};
+use bdk_wallet::chain::Merge;
 use bdk_wallet::rusqlite::Connection;
-use bdk_wallet::{
-    extract_prepared_mweb_pegin, MwebStore, PersistedWallet, SignOptions,
-};
+use bdk_wallet::{extract_prepared_mweb_pegin, MwebStore, PersistedWallet, SignOptions};
 
 use crate::dto::{
-    CombinedSummary, MwebBroadcastResult, MwebSendRequest, PeginRequest, PeginResult, PegoutRequest,
-    TxKind, WalletSummary,
+    CombinedSummary, MwebBroadcastResult, MwebSendRequest, PeginRequest, PeginResult,
+    PegoutRequest, TxKind, WalletSummary,
 };
 use crate::error::WalletError;
 use crate::meta;
@@ -105,22 +103,39 @@ impl MwebRuntime {
     pub fn persist(&mut self, data_dir: &Path) -> Result<(), WalletError> {
         if let Some(key) = self.sealing_key {
             self.agg.merge(self.store.take_staged());
-            let coins = bdk_mweb::seal_changeset(&key, &self.agg)
-                .map_err(|e| WalletError::Mweb(e.to_string()))?;
+            // One counter for all four blobs, so a later read can tell whether
+            // they came from the same persist.
+            let counter = load_seal_counter(data_dir).saturating_add(1);
+
+            let coins =
+                bdk_mweb::seal_changeset_with_context(&key, &self.agg, SealContext::Coins, counter)
+                    .map_err(|e| WalletError::Mweb(e.to_string()))?;
             write_sealed(&meta::mweb_coins_enc_path(data_dir), coins)?;
             let sync_json = serde_json::to_vec(&self.sync_state)
                 .map_err(|e| WalletError::Mweb(e.to_string()))?;
-            write_sealed(&meta::mweb_sync_enc_path(data_dir), seal_bytes(&key, &sync_json)?)?;
+            write_sealed(
+                &meta::mweb_sync_enc_path(data_dir),
+                seal_bytes(&key, &sync_json, SealContext::SyncState, counter)?,
+            )?;
             write_sealed(
                 &meta::mweb_index_enc_path(data_dir),
-                seal_bytes(&key, self.receive_index.to_string().as_bytes())?,
+                seal_bytes(
+                    &key,
+                    self.receive_index.to_string().as_bytes(),
+                    SealContext::Index,
+                    counter,
+                )?,
             )?;
-            let history_json = serde_json::to_vec(&self.history)
-                .map_err(|e| WalletError::Mweb(e.to_string()))?;
+            let history_json =
+                serde_json::to_vec(&self.history).map_err(|e| WalletError::Mweb(e.to_string()))?;
             write_sealed(
                 &meta::mweb_history_enc_path(data_dir),
-                seal_bytes(&key, &history_json)?,
+                seal_bytes(&key, &history_json, SealContext::History, counter)?,
             )?;
+            // Written last: a crash between the blobs and the counter leaves the
+            // counter behind, which reads as "not yet advanced" rather than as a
+            // rollback.
+            save_seal_counter(data_dir, counter)?;
             // Everything is sealed on disk now; drop plaintext-era leftovers.
             remove_legacy_plaintext_files(data_dir);
         } else {
@@ -657,9 +672,14 @@ mod tests {
 
         // Reopen with a sealing key: legacy sqlite is read, next persist seals
         // everything and removes the plaintext files.
-        let mut sealed =
-            MwebRuntime::open(dir.path(), &secret, WalletNetwork::Testnet, scheme, Some(key))
-                .unwrap();
+        let mut sealed = MwebRuntime::open(
+            dir.path(),
+            &secret,
+            WalletNetwork::Testnet,
+            scheme,
+            Some(key),
+        )
+        .unwrap();
         assert_eq!(sealed.store.db().unspent_count(), 1);
         assert_eq!(sealed.receive_index, 7);
         assert_eq!(sealed.history.entries.len(), 1);
@@ -669,9 +689,14 @@ mod tests {
         assert!(!meta::mweb_history_path(dir.path()).is_file());
 
         // Sealed reload sees the same state; the sealed blob is not plaintext.
-        let reloaded =
-            MwebRuntime::open(dir.path(), &secret, WalletNetwork::Testnet, scheme, Some(key))
-                .unwrap();
+        let reloaded = MwebRuntime::open(
+            dir.path(),
+            &secret,
+            WalletNetwork::Testnet,
+            scheme,
+            Some(key),
+        )
+        .unwrap();
         assert_eq!(reloaded.store.db().unspent_count(), 1);
         assert_eq!(reloaded.receive_index, 7);
         assert_eq!(reloaded.history.entries.len(), 1);
@@ -687,6 +712,185 @@ mod tests {
             Some([0u8; 32]),
         );
         assert!(wrong.is_err());
+    }
+
+    /// Set up a sealed wallet directory and return its dir, secret, and key.
+    fn sealed_fixture() -> (tempfile::TempDir, crate::seed::MasterSecret, [u8; 32]) {
+        let dir = tempfile::tempdir().unwrap();
+        let secret = crate::seed::MasterSecret::parse(
+            &crate::descriptors::generate_mnemonic().unwrap(),
+            None,
+        )
+        .unwrap();
+        let key = [0x5au8; 32];
+        let scheme = crate::dto::MwebScheme::default().to_master_scheme();
+
+        let mut rt = MwebRuntime::open(
+            dir.path(),
+            &secret,
+            WalletNetwork::Testnet,
+            scheme,
+            Some(key),
+        )
+        .unwrap();
+        rt.store.db_mut().insert(coin(1, Some(100), Some(4)));
+        rt.receive_index = 3;
+        rt.history.record(entry(TxKind::MwebSend, &[1], &[]));
+        rt.persist(dir.path()).unwrap();
+        (dir, secret, key)
+    }
+
+    #[test]
+    fn sealed_blobs_cannot_be_swapped_between_files() {
+        // Before the v2 envelope, all four blobs were sealed under one key with
+        // no associated data, so any of them opened as any other. An attacker
+        // with write access to the data directory could substitute the history
+        // for the coin database and authentication still passed.
+        let (dir, secret, key) = sealed_fixture();
+        let scheme = crate::dto::MwebScheme::default().to_master_scheme();
+
+        let history = std::fs::read(meta::mweb_history_enc_path(dir.path())).unwrap();
+        std::fs::write(meta::mweb_coins_enc_path(dir.path()), &history).unwrap();
+
+        let swapped = MwebRuntime::open(
+            dir.path(),
+            &secret,
+            WalletNetwork::Testnet,
+            scheme,
+            Some(key),
+        );
+        assert!(
+            swapped.is_err(),
+            "history.enc was accepted in place of coins.enc"
+        );
+    }
+
+    #[test]
+    fn every_sealed_blob_is_a_v2_envelope_bound_to_its_own_context() {
+        let (dir, _secret, key) = sealed_fixture();
+        for (path, ctx) in [
+            (meta::mweb_coins_enc_path(dir.path()), SealContext::Coins),
+            (meta::mweb_sync_enc_path(dir.path()), SealContext::SyncState),
+            (meta::mweb_index_enc_path(dir.path()), SealContext::Index),
+            (
+                meta::mweb_history_enc_path(dir.path()),
+                SealContext::History,
+            ),
+        ] {
+            let blob = std::fs::read(&path).unwrap();
+            assert!(
+                bdk_mweb::is_v2(&blob),
+                "{} is not a v2 envelope",
+                path.display()
+            );
+            assert!(
+                bdk_mweb::open_with_context(&key, &blob, ctx).is_ok(),
+                "{} does not open under its own context",
+                path.display()
+            );
+            // Every other context must be rejected, so the tag is load-bearing
+            // rather than merely present.
+            for other in [
+                SealContext::Coins,
+                SealContext::SyncState,
+                SealContext::Index,
+                SealContext::History,
+            ] {
+                if other == ctx {
+                    continue;
+                }
+                assert!(
+                    bdk_mweb::open_with_context(&key, &blob, other).is_err(),
+                    "{} opened under the wrong context",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_persist_counter_advances_and_is_shared_by_every_blob() {
+        let (dir, secret, key) = sealed_fixture();
+        let scheme = crate::dto::MwebScheme::default().to_master_scheme();
+        assert_eq!(load_seal_counter(dir.path()), 1);
+
+        let mut rt = MwebRuntime::open(
+            dir.path(),
+            &secret,
+            WalletNetwork::Testnet,
+            scheme,
+            Some(key),
+        )
+        .unwrap();
+        rt.persist(dir.path()).unwrap();
+        assert_eq!(load_seal_counter(dir.path()), 2);
+
+        // All four blobs must carry the same counter, otherwise mixing files
+        // from different persists would not be detectable.
+        for path in [
+            meta::mweb_coins_enc_path(dir.path()),
+            meta::mweb_sync_enc_path(dir.path()),
+            meta::mweb_index_enc_path(dir.path()),
+            meta::mweb_history_enc_path(dir.path()),
+        ] {
+            let blob = std::fs::read(&path).unwrap();
+            // Counter is bytes 10..18 of the v2 header, little-endian.
+            let counter = u64::from_le_bytes(blob[10..18].try_into().unwrap());
+            assert_eq!(counter, 2, "{} carries a stale counter", path.display());
+        }
+    }
+
+    #[test]
+    fn legacy_sealed_blobs_still_open() {
+        // Wallets written before the v2 envelope must keep working with no
+        // migration step; the next persist rewrites them as v2.
+        let dir = tempfile::tempdir().unwrap();
+        let secret = crate::seed::MasterSecret::parse(
+            &crate::descriptors::generate_mnemonic().unwrap(),
+            None,
+        )
+        .unwrap();
+        let key = [0x77u8; 32];
+        let scheme = crate::dto::MwebScheme::default().to_master_scheme();
+
+        // Write all four files in the legacy format by hand.
+        let mut cs = ChangeSet::default();
+        cs.coins.insert([1; 32], coin(1, Some(100), Some(4)));
+        std::fs::write(
+            meta::mweb_coins_enc_path(dir.path()),
+            bdk_mweb::seal_changeset(&key, &cs).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            meta::mweb_sync_enc_path(dir.path()),
+            bdk_mweb::seal(&key, &serde_json::to_vec(&SyncState::default()).unwrap()).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            meta::mweb_index_enc_path(dir.path()),
+            bdk_mweb::seal(&key, b"9").unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            meta::mweb_history_enc_path(dir.path()),
+            bdk_mweb::seal(&key, &serde_json::to_vec(&MwebHistory::default()).unwrap()).unwrap(),
+        )
+        .unwrap();
+
+        let mut rt = MwebRuntime::open(
+            dir.path(),
+            &secret,
+            WalletNetwork::Testnet,
+            scheme,
+            Some(key),
+        )
+        .unwrap();
+        assert_eq!(rt.store.db().unspent_count(), 1);
+        assert_eq!(rt.receive_index, 9);
+
+        rt.persist(dir.path()).unwrap();
+        let upgraded = std::fs::read(meta::mweb_coins_enc_path(dir.path())).unwrap();
+        assert!(bdk_mweb::is_v2(&upgraded), "persist did not upgrade to v2");
     }
 
     #[test]
@@ -722,20 +926,80 @@ pub fn wipe_mweb_files(data_dir: &Path) -> Result<(), WalletError> {
     Ok(())
 }
 
-/// AEAD-seal `plain` under the wallet sealing key.
-fn seal_bytes(key: &[u8; 32], plain: &[u8]) -> Result<Vec<u8>, WalletError> {
-    bdk_mweb::seal(key, plain).map_err(|e| WalletError::Mweb(e.to_string()))
+/// AEAD-seal `plain` under the wallet sealing key, bound to `context`.
+///
+/// All four MWEB blobs are sealed under one key. Without the context binding
+/// they are interchangeable: an attacker with write access to the data
+/// directory can copy `mweb_history.enc` over `mweb_coins.enc` and the AEAD tag
+/// still verifies, because nothing in the ciphertext says which file it is.
+/// `bdk_mweb`'s v2 envelope binds the context tag as associated data, so
+/// opening under the wrong one fails.
+fn seal_bytes(
+    key: &[u8; 32],
+    plain: &[u8],
+    context: SealContext,
+    counter: u64,
+) -> Result<Vec<u8>, WalletError> {
+    bdk_mweb::seal_with_context_and_counter(key, plain, context, counter)
+        .map_err(|e| WalletError::Mweb(e.to_string()))
 }
 
 /// Open a sealed file; `Ok(None)` when the file does not exist.
-fn read_sealed(path: &Path, key: &[u8; 32]) -> Result<Option<Vec<u8>>, WalletError> {
+///
+/// Reads both envelope versions. A v2 blob must carry `context`; a legacy blob
+/// predates the tag and is accepted as-is, so wallets written by an older build
+/// keep opening with no migration step. The next `persist` rewrites it as v2.
+fn read_sealed(
+    path: &Path,
+    key: &[u8; 32],
+    context: SealContext,
+) -> Result<Option<Vec<u8>>, WalletError> {
     match fs::read(path) {
-        Ok(blob) => bdk_mweb::open(key, &blob)
+        Ok(blob) => open_sealed_blob(&blob, key, context)
             .map(Some)
             .map_err(|e| WalletError::Mweb(format!("{}: {e}", path.display()))),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(WalletError::Io(e)),
     }
+}
+
+fn open_sealed_blob(
+    blob: &[u8],
+    key: &[u8; 32],
+    context: SealContext,
+) -> Result<Vec<u8>, bdk_mweb::Error> {
+    if bdk_mweb::is_v2(blob) {
+        bdk_mweb::open_with_context(key, blob, context)
+    } else {
+        bdk_mweb::open(key, blob)
+    }
+}
+
+/// Monotonic persist counter, bound into every v2 envelope this wallet writes.
+///
+/// The four MWEB blobs are written together and must be read together. Sealing
+/// them all under the same counter turns a *partial* rollback — restoring only
+/// `mweb_coins.enc` from an older backup while sync state and history stay
+/// current — into a detectable mismatch. That is the realistic attack, since
+/// the files are separate and independently replaceable.
+///
+/// It does not detect a rollback of the whole directory at once. Doing that
+/// needs a high-water mark somewhere the attacker cannot roll back with the
+/// files, which means inside the Argon2-sealed secrets blob; see
+/// `docs/AUDIT_NOTES.md`.
+fn load_seal_counter(data_dir: &Path) -> u64 {
+    fs::read_to_string(meta::mweb_seal_counter_path(data_dir))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn save_seal_counter(data_dir: &Path, counter: u64) -> Result<(), WalletError> {
+    fs::write(
+        meta::mweb_seal_counter_path(data_dir),
+        format!("{counter}\n"),
+    )?;
+    Ok(())
 }
 
 fn write_sealed(path: &Path, blob: Vec<u8>) -> Result<(), WalletError> {
@@ -769,8 +1033,13 @@ fn load_store(
         let path = meta::mweb_coins_enc_path(data_dir);
         if path.is_file() {
             let blob = fs::read(&path)?;
-            let cs = bdk_mweb::open_changeset(key, &blob)
-                .map_err(|e| WalletError::Mweb(format!("sealed MWEB store: {e}")))?;
+            let cs = if bdk_mweb::is_v2(&blob) {
+                bdk_mweb::open_changeset_with_context(key, &blob, SealContext::Coins, 0)
+                    .map(|(cs, _counter)| cs)
+            } else {
+                bdk_mweb::open_changeset(key, &blob)
+            }
+            .map_err(|e| WalletError::Mweb(format!("sealed MWEB store: {e}")))?;
             return Ok((MwebStore::from_changeset(cs.clone()), cs));
         }
     }
@@ -806,7 +1075,11 @@ fn load_sync_state(
     sealing_key: Option<&[u8; 32]>,
 ) -> Result<SyncState, WalletError> {
     if let Some(key) = sealing_key {
-        if let Some(plain) = read_sealed(&meta::mweb_sync_enc_path(data_dir), key)? {
+        if let Some(plain) = read_sealed(
+            &meta::mweb_sync_enc_path(data_dir),
+            key,
+            SealContext::SyncState,
+        )? {
             return serde_json::from_slice(&plain).map_err(|e| WalletError::Mweb(e.to_string()));
         }
     }
@@ -824,12 +1097,13 @@ fn save_sync_state(data_dir: &Path, state: &SyncState) -> Result<(), WalletError
     Ok(())
 }
 
-fn load_receive_index(
-    data_dir: &Path,
-    sealing_key: Option<&[u8; 32]>,
-) -> Result<u32, WalletError> {
+fn load_receive_index(data_dir: &Path, sealing_key: Option<&[u8; 32]>) -> Result<u32, WalletError> {
     if let Some(key) = sealing_key {
-        if let Some(plain) = read_sealed(&meta::mweb_index_enc_path(data_dir), key)? {
+        if let Some(plain) = read_sealed(
+            &meta::mweb_index_enc_path(data_dir),
+            key,
+            SealContext::Index,
+        )? {
             let s = String::from_utf8_lossy(&plain);
             return Ok(s.trim().parse().unwrap_or(0));
         }
@@ -852,7 +1126,11 @@ fn load_history(
     sealing_key: Option<&[u8; 32]>,
 ) -> Result<MwebHistory, WalletError> {
     if let Some(key) = sealing_key {
-        if let Some(plain) = read_sealed(&meta::mweb_history_enc_path(data_dir), key)? {
+        if let Some(plain) = read_sealed(
+            &meta::mweb_history_enc_path(data_dir),
+            key,
+            SealContext::History,
+        )? {
             return serde_json::from_slice(&plain).map_err(|e| WalletError::Mweb(e.to_string()));
         }
     }

@@ -19,6 +19,10 @@ pub const MWEB_COINS_ENC_FILE: &str = "mweb_coins.enc";
 pub const MWEB_SYNC_ENC_FILE: &str = "mweb_sync.enc";
 pub const MWEB_INDEX_ENC_FILE: &str = "mweb_receive_index.enc";
 pub const MWEB_HISTORY_ENC_FILE: &str = "mweb_history.enc";
+/// Persist counter bound into every sealed MWEB blob. Not a secret: it reveals
+/// only how many times the wallet has written, and its value is already visible
+/// in the cleartext header of each envelope.
+pub const MWEB_SEAL_COUNTER_FILE: &str = "mweb_seal_counter.txt";
 
 fn default_true() -> bool {
     true
@@ -126,10 +130,13 @@ pub fn mweb_history_enc_path(data_dir: &Path) -> PathBuf {
     data_dir.join(MWEB_HISTORY_ENC_FILE)
 }
 
+pub fn mweb_seal_counter_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(MWEB_SEAL_COUNTER_FILE)
+}
+
 pub fn write_meta(data_dir: &Path, meta: &WalletMeta) -> Result<(), WalletError> {
     fs::create_dir_all(data_dir)?;
-    let json =
-        serde_json::to_string_pretty(meta).map_err(|e| WalletError::Meta(e.to_string()))?;
+    let json = serde_json::to_string_pretty(meta).map_err(|e| WalletError::Meta(e.to_string()))?;
     fs::write(meta_path(data_dir), json)?;
     Ok(())
 }
@@ -152,7 +159,10 @@ pub fn wallet_files_exist(data_dir: &Path) -> bool {
 pub fn validate_electrum_url(url: &str) -> Result<(), WalletError> {
     let url = url.trim();
     let ok = (url.starts_with("ssl://") || url.starts_with("tcp://"))
-        && url.rfind(':').map(|i| url[i + 1..].parse::<u16>().is_ok()).unwrap_or(false);
+        && url
+            .rfind(':')
+            .map(|i| url[i + 1..].parse::<u16>().is_ok())
+            .unwrap_or(false);
     if ok {
         Ok(())
     } else {

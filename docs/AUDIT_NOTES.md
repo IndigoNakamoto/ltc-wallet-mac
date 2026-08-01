@@ -45,6 +45,35 @@ Severity: **H**igh / **M**edium / **L**ow / **I**nformational.
 | — | I | Release integrity relied on checksums alone | GitHub build provenance attestations on every artifact (`gh attestation verify`); optional minisign signing of the checksums files (drop-in via `MINISIGN_SECRET_KEY` secret) |
 | — | I | Dependency advisories were only checked when code changed | Weekly scheduled CI run of `cargo audit` / `cargo deny` / `npm audit` |
 
+## `bdk_mweb` security hardening pass
+
+`IndigoNakamoto/bdk` has been through a security pass covering `crates/mweb`
+(the plan and findings are in that repo's `docs/SECURITY_PLAN.md`). This repo
+carries the wallet half of it, and `deps/pins.env` points at that work as
+`BDK_REF=f5c8e7ac…`. The pin cannot move back: the wallet-side code below does
+not compile against an earlier `bdk`. CI needs that commit pushed to
+`IndigoNakamoto/bdk` before it can resolve the pin.
+
+What the pin move changes for this repo:
+
+| Change in `bdk_mweb` | Effect here |
+| --- | --- |
+| `VerifyMode` default flips from `HeaderAndPmmr` to `Anchored` | `MwebSyncer::tip_only()` now requires each `mwebheader` to be bound to its block through the HogEx commitment. This is a real behaviour change: a peer serving an internally consistent but invented MWEB chain used to pass. Escape hatch during rollout: `BDK_MWEB_VERIFY_MODE=header-and-pmmr`. It cannot select `Trusted`, so it is not a way to switch verification off |
+| v2 seal envelope (`SealContext`, magic, version, counter as AAD) | Adopted in `crates/wallet-core/src/mweb.rs`: each of the four MWEB blobs is sealed under its own context, so `mweb_history.enc` can no longer be substituted for `mweb_coins.enc`. Legacy blobs still open; the next `persist` rewrites them as v2 |
+| `MwebCoin` gains `Drop`, redacted `Debug`, constant-time `PartialEq` | No source change needed. Secrets no longer appear in `{:?}` output |
+| `MasterKeys` gains `Drop` and a redacted `Debug` | No source change needed |
+| Peer-facing decode bounds, framing caps, liveness fixes | No source change needed |
+
+### Rollback detection is partial
+
+The v2 envelope carries a monotonic counter, and `persist` writes the same
+counter into all four MWEB blobs plus `mweb_seal_counter.txt`. That makes a
+*partial* rollback detectable — restoring only `mweb_coins.enc` from an older
+backup while sync state and history stay current. It does **not** detect a
+rollback of the whole data directory, because the counter file rolls back with
+it. Closing that needs the high-water mark inside the Argon2-sealed secrets
+blob, which means a v3 secrets format. Tracked as O12 below.
+
 ## Open findings (deferred — future work, external-audit scope)
 
 | # | Sev | Finding | Suggested direction |
@@ -56,6 +85,7 @@ Severity: **H**igh / **M**edium / **L**ow / **I**nformational.
 | O9 | I | Release workflow does not require green CI on the same commit before building | Protect the `release` branch with required status checks |
 | O10 | I | macOS releases unsigned until Apple Developer credentials exist | CI signing is already drop-in; enroll and add the six secrets |
 | O11 | I | Electrum tip cross-check compares headers only; individual mempool transactions can still be hidden by the sync server until confirmed | Full script-level cross-checking would leak addresses to a second server; revisit with Tor support |
+| O12 | L | Whole-directory rollback of the sealed MWEB files is undetectable: the v2 envelope counter is checked against `mweb_seal_counter.txt`, which an attacker rolls back alongside the blobs | Move the high-water mark into the Argon2-sealed secrets blob (a v3 secrets format), so reverting it requires the passphrase. Partial rollback is already detected |
 
 ## Scope notes for a future third-party audit
 
