@@ -26,7 +26,35 @@ scripts/verify-release.sh checksums "LTC Wallet_0.2.1_aarch64.dmg" SHA256SUMS-ma
 This proves your download was not corrupted or swapped after CI built it. It
 does not prove the source code is honest — for that, keep reading.
 
-## 2. Check the macOS signature (signed releases)
+## 2. Verify build provenance (attestations)
+
+Every artifact digest is attested by GitHub's build provenance service at
+build time, cryptographically linking it to the exact commit and workflow run
+that produced it. With the [GitHub CLI](https://cli.github.com/):
+
+```bash
+gh attestation verify "LTC Wallet_0.3.0_aarch64.dmg" --repo IndigoNakamoto/ltc-wallet-mac
+```
+
+A successful verification shows the source commit and the workflow file that
+built the artifact. This defeats an attacker who can replace release assets
+but cannot forge GitHub's signing infrastructure.
+
+### Minisign signature (offline verification)
+
+When a release includes `SHA256SUMS-<platform>.txt.minisig`, the checksums
+file is additionally signed with the project's minisign key, so verification
+does not depend on GitHub at all:
+
+```bash
+minisign -Vm SHA256SUMS-macos-aarch64.txt -P <project public key>
+```
+
+The public key is published in the repository README once signing is active;
+cross-check it from more than one channel (repo, release notes) before
+trusting it.
+
+## 3. Check the macOS signature (signed releases)
 
 Once releases are signed and notarized:
 
@@ -39,7 +67,7 @@ Unsigned builds (the current state — the release notes say which) fail these
 checks and require clearing the quarantine flag; that is exactly the trust gap
 signing closes, so prefer building from source until releases are signed.
 
-## 3. Cross-check the dependency pins
+## 4. Cross-check the dependency pins
 
 The wallet's key handling and MWEB cryptography live in sibling repositories.
 Each release's notes list the exact commits it was built from. Confirm they
@@ -51,7 +79,7 @@ git show v0.2.1:deps/pins.env
 
 If the release notes and the pin file disagree, do not trust the artifact.
 
-## 4. Verify address derivation independently
+## 5. Verify address derivation independently
 
 Paranoid-mode check that the wallet derives the addresses your seed should
 produce — run on an offline machine with a throwaway seed first:
@@ -64,7 +92,7 @@ cargo run -p wallet-cli -- derive --network mainnet --count 5
 Compare the derived addresses against another implementation (Electrum-LTC,
 litecoind, or a hardware wallet with the same seed).
 
-## 5. Check your local secret storage
+## 6. Check your local secret storage
 
 After creating a wallet:
 
@@ -77,9 +105,12 @@ ls -l "$DATA_DIR"
 
 Expect: `wallet.mnemonic.enc` with mode `-rw-------` (0600), and **no**
 plaintext `wallet.mnemonic` file (legacy plaintext files are migrated to
-encrypted storage on first unlock, then deleted).
+encrypted storage on first unlock, then deleted). MWEB data is sealed too:
+after the first sync you should see `mweb_coins.enc`, `mweb_sync.enc`,
+`mweb_receive_index.enc` and `mweb_history.enc` instead of the older
+plaintext `mweb.sqlite` / `mweb_*.json` files.
 
-## 6. Build from source
+## 7. Build from source
 
 The strongest check: build the exact pinned source and compare with the
 released artifacts.

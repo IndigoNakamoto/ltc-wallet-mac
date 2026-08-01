@@ -81,6 +81,12 @@ pub struct SyncResult {
     pub electrum_ms: u64,
     /// Wall-clock time in the MWEB phase; 0 when MWEB is not active.
     pub mweb_ms: u64,
+    /// Electrum server that served this sync.
+    #[serde(default)]
+    pub electrum_server: String,
+    /// Cross-check / trust warnings the user should see (empty when all clear).
+    #[serde(default)]
+    pub warnings: Vec<String>,
 }
 
 /// Request to send litecoin.
@@ -154,6 +160,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_auto_lock_minutes() -> u32 {
+    15
+}
+
 /// Electrum / peer settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletSettings {
@@ -161,6 +171,16 @@ pub struct WalletSettings {
     /// Verify TLS certificates on ssl:// Electrum servers (default true).
     #[serde(default = "default_true")]
     pub electrum_validate_domain: bool,
+    /// Fall back to built-in public Electrum servers when the configured one
+    /// is down (default true). Disable to keep addresses off public servers.
+    #[serde(default = "default_true")]
+    pub electrum_use_public_fallback: bool,
+    /// Lock the wallet after this many idle minutes (0 = never).
+    #[serde(default = "default_auto_lock_minutes")]
+    pub auto_lock_minutes: u32,
+    /// Server the current session last connected to (read-only, may be a fallback).
+    #[serde(default)]
+    pub electrum_active_url: Option<String>,
     #[serde(default)]
     pub litecoin_rpc_url: Option<String>,
     #[serde(default)]
@@ -177,6 +197,13 @@ pub struct UpdateSettingsRequest {
     /// Verify TLS certificates on ssl:// Electrum servers (default true).
     #[serde(default = "default_true")]
     pub electrum_validate_domain: bool,
+    /// Fall back to built-in public Electrum servers when the configured one
+    /// is down (default true).
+    #[serde(default = "default_true")]
+    pub electrum_use_public_fallback: bool,
+    /// Lock the wallet after this many idle minutes (0 = never).
+    #[serde(default = "default_auto_lock_minutes")]
+    pub auto_lock_minutes: u32,
     #[serde(default)]
     pub litecoin_rpc_url: Option<String>,
     #[serde(default)]

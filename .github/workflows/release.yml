@@ -12,7 +12,11 @@
 # workflow edits are needed when credentials arrive.
 #
 # Each platform job also attaches a SHA256SUMS-<platform>.txt so users can
-# verify downloaded artifacts (see docs/VERIFYING.md).
+# verify downloaded artifacts (see docs/VERIFYING.md). Every artifact gets a
+# GitHub build provenance attestation (verify with `gh attestation verify`),
+# and when a MINISIGN_SECRET_KEY repository secret exists (an *unencrypted*
+# key generated with `minisign -G -W`; publish the matching public key), each
+# SHA256SUMS file is also signed offline-verifiably with minisign.
 name: Release
 
 on:
@@ -23,6 +27,9 @@ on:
 
 permissions:
   contents: write
+  # Build provenance attestations (actions/attest-build-provenance).
+  id-token: write
+  attestations: write
 
 jobs:
   publish:
@@ -40,8 +47,9 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     env:
-      # secrets.* is not allowed in step-level `if:`; surface the check as env.
+      # secrets.* is not allowed in step-level `if:`; surface the checks as env.
       HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+      HAS_MINISIGN: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
 
     steps:
       - name: Checkout wallet
@@ -211,3 +219,43 @@ jobs:
             "https://uploads.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID/assets?name=$SUMS_FILE" \
             > /dev/null
           echo "Uploaded $SUMS_FILE to release $RELEASE_ID"
+
+      # Provenance: cryptographically links each artifact digest to this exact
+      # workflow run, commit and builder. Verify with:
+      #   gh attestation verify <file> --repo ${{ github.repository }}
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-checksums: SHA256SUMS-${{ matrix.sums_suffix }}.txt
+
+      # Offline-verifiable signature over the checksums file. Requires an
+      # unencrypted minisign secret key (minisign -G -W) in MINISIGN_SECRET_KEY;
+      # users verify with the published public key:
+      #   minisign -Vm SHA256SUMS-<platform>.txt -P <public key>
+      - name: Sign checksums with minisign
+        if: env.HAS_MINISIGN == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          RELEASE_ID: ${{ steps.build_signed.outputs.releaseId || steps.build_unsigned.outputs.releaseId }}
+          SUMS_FILE: SHA256SUMS-${{ matrix.sums_suffix }}.txt
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            brew install minisign
+          else
+            sudo apt-get update && sudo apt-get install -y minisign
+          fi
+          umask 077
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > minisign.key
+          minisign -S -s minisign.key -m "$SUMS_FILE" -x "$SUMS_FILE.minisig" \
+            -t "ltc-wallet release $GITHUB_REF_NAME"
+          rm -f minisign.key
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@$SUMS_FILE.minisig" \
+            "https://uploads.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID/assets?name=$SUMS_FILE.minisig" \
+            > /dev/null
+          echo "Uploaded $SUMS_FILE.minisig to release $RELEASE_ID"

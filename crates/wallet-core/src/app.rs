@@ -34,6 +34,10 @@ struct WalletState {
     electrum_url: String,
     /// Verify TLS certificates on ssl:// Electrum servers.
     electrum_validate_domain: bool,
+    /// Fall back to built-in public servers when the configured one is down.
+    electrum_use_public_fallback: bool,
+    /// Lock the wallet after this many idle minutes (0 = never); enforced by the UI.
+    auto_lock_minutes: u32,
     /// Server that most recently worked this session (tried first to avoid
     /// re-paying a connect timeout on a dead configured server).
     active_electrum_url: Option<String>,
@@ -47,7 +51,25 @@ struct WalletState {
     last_tip_height: u32,
 }
 
-/// Candidate Electrum URLs in try order: last-good this session, configured, defaults.
+/// Snapshot the persistable subset of `state` (single source of truth for
+/// every `write_meta` call).
+fn meta_from_state(state: &WalletState) -> WalletMeta {
+    WalletMeta {
+        network: state.network,
+        electrum_url: state.electrum_url.clone(),
+        electrum_validate_domain: state.electrum_validate_domain,
+        electrum_use_public_fallback: state.electrum_use_public_fallback,
+        auto_lock_minutes: state.auto_lock_minutes,
+        needs_full_scan: state.needs_full_scan,
+        needs_mweb_scan: state.needs_mweb_scan,
+        litecoin_rpc_url: state.litecoin_rpc_url.clone(),
+        mweb_peers: state.mweb_peers.clone(),
+        mweb_scheme: state.mweb_scheme,
+    }
+}
+
+/// Candidate Electrum URLs in try order: last-good this session, configured,
+/// then (unless the user opted out) the built-in public defaults.
 fn electrum_candidates(state: &WalletState) -> Vec<String> {
     let mut urls: Vec<String> = Vec::new();
     if let Some(active) = &state.active_electrum_url {
@@ -56,10 +78,12 @@ fn electrum_candidates(state: &WalletState) -> Vec<String> {
     if !urls.contains(&state.electrum_url) {
         urls.push(state.electrum_url.clone());
     }
-    for default in state.network.default_electrum_urls() {
-        let default = default.to_string();
-        if !urls.contains(&default) {
-            urls.push(default);
+    if state.electrum_use_public_fallback {
+        for default in state.network.default_electrum_urls() {
+            let default = default.to_string();
+            if !urls.contains(&default) {
+                urls.push(default);
+            }
         }
     }
     urls
@@ -225,6 +249,7 @@ impl WalletApp {
             &secret,
             meta.network,
             meta.mweb_scheme.to_master_scheme(),
+            self.secrets.sealing_key(),
         )
         .ok();
 
@@ -235,6 +260,8 @@ impl WalletApp {
             network: meta.network,
             electrum_url: meta.electrum_url,
             electrum_validate_domain: meta.electrum_validate_domain,
+            electrum_use_public_fallback: meta.electrum_use_public_fallback,
+            auto_lock_minutes: meta.auto_lock_minutes,
             active_electrum_url: None,
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
@@ -359,6 +386,9 @@ impl WalletApp {
         Ok(WalletSettings {
             electrum_url: state.electrum_url.clone(),
             electrum_validate_domain: state.electrum_validate_domain,
+            electrum_use_public_fallback: state.electrum_use_public_fallback,
+            auto_lock_minutes: state.auto_lock_minutes,
+            electrum_active_url: state.active_electrum_url.clone(),
             litecoin_rpc_url: state.litecoin_rpc_url.clone(),
             mweb_peers: state.mweb_peers.clone(),
             mweb_scheme: state.mweb_scheme,
@@ -372,6 +402,8 @@ impl WalletApp {
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
         state.electrum_url = req.electrum_url.trim().to_string();
         state.electrum_validate_domain = req.electrum_validate_domain;
+        state.electrum_use_public_fallback = req.electrum_use_public_fallback;
+        state.auto_lock_minutes = req.auto_lock_minutes;
         // New configured server should be tried first on the next connection.
         state.active_electrum_url = None;
         state.litecoin_rpc_url = req
@@ -384,17 +416,7 @@ impl WalletApp {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        let meta = WalletMeta {
-            network: state.network,
-            electrum_url: state.electrum_url.clone(),
-            electrum_validate_domain: state.electrum_validate_domain,
-            needs_full_scan: state.needs_full_scan,
-            needs_mweb_scan: state.needs_mweb_scan,
-            litecoin_rpc_url: state.litecoin_rpc_url.clone(),
-            mweb_peers: state.mweb_peers.clone(),
-            mweb_scheme: state.mweb_scheme,
-        };
-        meta::write_meta(&state.data_dir, &meta)?;
+        meta::write_meta(&state.data_dir, &meta_from_state(state))?;
         Ok(())
     }
 
@@ -451,6 +473,32 @@ impl WalletApp {
             state.needs_full_scan = false;
         }
 
+        // Privacy-preserving second opinion: compare the served chain against
+        // an independent server (headers only, never our scripts).
+        let mut warnings: Vec<String> = Vec::new();
+        let used_server = state
+            .active_electrum_url
+            .clone()
+            .unwrap_or_else(|| state.electrum_url.clone());
+        if let Some(alt) = electrum_candidates(state)
+            .into_iter()
+            .find(|url| *url != used_server)
+        {
+            let chain = state.wallet.local_chain();
+            let local_hash_at = |height: u32| chain.get(height).map(|cp| cp.hash());
+            match electrum::cross_check_tip(
+                &alt,
+                state.electrum_validate_domain,
+                tip_height,
+                &local_hash_at,
+            ) {
+                Ok(Some(warning)) => warnings.push(warning),
+                Ok(None) => {}
+                // Unreachable second server is not a finding; skip quietly.
+                Err(_) => {}
+            }
+        }
+
         // MWEB sync (best-effort; peer failure → stale, not hard error).
         let mut mweb_ms = 0u64;
         if let Some(ref mut mweb) = state.mweb {
@@ -477,21 +525,14 @@ impl WalletApp {
             if state.needs_mweb_scan {
                 state.needs_mweb_scan = false;
             }
+            if let Some(warning) = mweb.cross_check_warning.clone() {
+                warnings.push(warning);
+            }
             let _ = mweb.persist(&state.data_dir);
             mweb_ms = mweb_started.elapsed().as_millis() as u64;
         }
 
-        let meta = WalletMeta {
-            network: state.network,
-            electrum_url: state.electrum_url.clone(),
-            electrum_validate_domain: state.electrum_validate_domain,
-            needs_full_scan: state.needs_full_scan,
-            needs_mweb_scan: state.needs_mweb_scan,
-            litecoin_rpc_url: state.litecoin_rpc_url.clone(),
-            mweb_peers: state.mweb_peers.clone(),
-            mweb_scheme: state.mweb_scheme,
-        };
-        meta::write_meta(&state.data_dir, &meta)?;
+        meta::write_meta(&state.data_dir, &meta_from_state(state))?;
 
         let tx_count_after = state.wallet.transactions().count();
         let new_txs = tx_count_after.saturating_sub(tx_count_before) as u32;
@@ -501,6 +542,8 @@ impl WalletApp {
             new_txs,
             electrum_ms,
             mweb_ms,
+            electrum_server: used_server,
+            warnings,
         })
     }
 
@@ -530,16 +573,8 @@ impl WalletApp {
         let secret = MasterSecret::from_stored(&stored)?;
         if let Some(scheme) = new_scheme {
             state.mweb_scheme = scheme;
-            let meta = WalletMeta {
-                network: state.network,
-                electrum_url: state.electrum_url.clone(),
-                electrum_validate_domain: state.electrum_validate_domain,
-                needs_full_scan: state.needs_full_scan,
-                needs_mweb_scan: true,
-                litecoin_rpc_url: state.litecoin_rpc_url.clone(),
-                mweb_peers: state.mweb_peers.clone(),
-                mweb_scheme: scheme,
-            };
+            let mut meta = meta_from_state(state);
+            meta.needs_mweb_scan = true;
             meta::write_meta(&state.data_dir, &meta)?;
         }
         state.mweb = Some(MwebRuntime::open(
@@ -547,6 +582,7 @@ impl WalletApp {
             &secret,
             state.network,
             state.mweb_scheme.to_master_scheme(),
+            self.secrets.sealing_key(),
         )?);
         state.needs_mweb_scan = true;
         let tip_height = state.wallet.latest_checkpoint().height();
@@ -752,8 +788,14 @@ impl WalletApp {
             }
         };
 
-        let mweb =
-            MwebRuntime::open(data_dir, secret, network, mweb_scheme.to_master_scheme()).ok();
+        let mweb = MwebRuntime::open(
+            data_dir,
+            secret,
+            network,
+            mweb_scheme.to_master_scheme(),
+            self.secrets.sealing_key(),
+        )
+        .ok();
 
         let mut state = WalletState {
             last_tip_height: wallet.latest_checkpoint().height(),
@@ -762,6 +804,8 @@ impl WalletApp {
             network,
             electrum_url: meta.electrum_url,
             electrum_validate_domain: meta.electrum_validate_domain,
+            electrum_use_public_fallback: meta.electrum_use_public_fallback,
+            auto_lock_minutes: meta.auto_lock_minutes,
             active_electrum_url: None,
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
@@ -869,6 +913,8 @@ impl MemoryBackedApp {
             network: meta.network,
             electrum_url: meta.electrum_url,
             electrum_validate_domain: meta.electrum_validate_domain,
+            electrum_use_public_fallback: meta.electrum_use_public_fallback,
+            auto_lock_minutes: meta.auto_lock_minutes,
             active_electrum_url: None,
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
@@ -973,6 +1019,8 @@ impl MemoryBackedApp {
             network,
             electrum_url: meta.electrum_url,
             electrum_validate_domain: meta.electrum_validate_domain,
+            electrum_use_public_fallback: meta.electrum_use_public_fallback,
+            auto_lock_minutes: meta.auto_lock_minutes,
             active_electrum_url: None,
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
@@ -1059,6 +1107,7 @@ mod tests {
             &secret,
             WalletNetwork::Testnet,
             MwebScheme::default().to_master_scheme(),
+            None,
         )
         .unwrap();
         mweb.history.record(MwebHistoryEntry {

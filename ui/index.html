@@ -626,6 +626,15 @@
                 Protects against man-in-the-middle attacks. Some community Electrum servers
                 use self-signed certificates and only work with verification off.
               </span>
+              <label class="check">
+                <input id="settings-public-fallback" type="checkbox" />
+                <span>Use public fallback servers when mine is down</span>
+              </label>
+              <span class="hint">
+                Turn this off if you run your own Electrum server for privacy — it stops the
+                wallet from ever sending your addresses to public servers.
+              </span>
+              <span class="hint" id="settings-active-server" hidden></span>
               <label class="field">
                 <span class="field-label">Litecoin RPC URL</span>
                 <input
@@ -662,6 +671,11 @@
                 Locking clears the decrypted mnemonic from memory. You will need your passphrase to
                 unlock again.
               </p>
+              <label class="field">
+                <span class="field-label">Auto-lock after inactivity (minutes)</span>
+                <input id="settings-auto-lock" type="number" min="0" max="1440" step="1" />
+                <span class="hint">0 disables auto-lock. Saved with the settings above.</span>
+              </label>
               <div class="row">
                 <button type="button" id="btn-lock" class="btn btn-secondary">
                   <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">

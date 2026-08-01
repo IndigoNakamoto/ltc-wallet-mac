@@ -36,6 +36,8 @@ type SyncResult = {
   new_txs: number;
   electrum_ms: number;
   mweb_ms: number;
+  electrum_server: string;
+  warnings: string[];
 };
 
 type SendResult = {
@@ -70,6 +72,9 @@ type MwebScheme = "litecoin-core" | "lip0004" | "mwebd";
 type WalletSettings = {
   electrum_url: string;
   electrum_validate_domain: boolean;
+  electrum_use_public_fallback: boolean;
+  auto_lock_minutes: number;
+  electrum_active_url: string | null;
   litecoin_rpc_url: string | null;
   mweb_peers: string[];
   mweb_scheme: MwebScheme;
@@ -216,6 +221,9 @@ const el = {
   sendFeeRate: document.querySelector<HTMLInputElement>("#send-fee-rate")!,
   settingsElectrum: document.querySelector<HTMLInputElement>("#settings-electrum")!,
   settingsValidateTls: document.querySelector<HTMLInputElement>("#settings-validate-tls")!,
+  settingsPublicFallback: document.querySelector<HTMLInputElement>("#settings-public-fallback")!,
+  settingsActiveServer: document.querySelector<HTMLElement>("#settings-active-server")!,
+  settingsAutoLock: document.querySelector<HTMLInputElement>("#settings-auto-lock")!,
   settingsRpc: document.querySelector<HTMLInputElement>("#settings-rpc")!,
   settingsPeers: document.querySelector<HTMLInputElement>("#settings-peers")!,
   settingsMwebScheme: document.querySelector<HTMLSelectElement>("#settings-mweb-scheme")!,
@@ -1120,6 +1128,19 @@ async function loadSettings() {
     const s = await invoke<WalletSettings>("get_settings");
     el.settingsElectrum.value = s.electrum_url;
     el.settingsValidateTls.checked = s.electrum_validate_domain ?? true;
+    el.settingsPublicFallback.checked = s.electrum_use_public_fallback ?? true;
+    el.settingsAutoLock.value = String(s.auto_lock_minutes ?? 15);
+    autoLockMinutes = s.auto_lock_minutes ?? 15;
+    if (s.electrum_active_url && s.electrum_active_url !== s.electrum_url) {
+      el.settingsActiveServer.hidden = false;
+      el.settingsActiveServer.textContent = `Currently connected to fallback server: ${s.electrum_active_url}`;
+    } else if (s.electrum_active_url) {
+      el.settingsActiveServer.hidden = false;
+      el.settingsActiveServer.textContent = `Currently connected to: ${s.electrum_active_url}`;
+    } else {
+      el.settingsActiveServer.hidden = true;
+      el.settingsActiveServer.textContent = "";
+    }
     el.settingsRpc.value = s.litecoin_rpc_url ?? "";
     el.settingsPeers.value = s.mweb_peers.join(", ");
     el.settingsMwebScheme.value = s.mweb_scheme ?? "litecoin-core";
@@ -1179,6 +1200,35 @@ function stopAutoSync() {
     autoSyncTimer = null;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Auto-lock: drop the decrypted key material after a period without user
+   input. The backend clears it on lock_wallet; this timer only decides when.
+   --------------------------------------------------------------------------- */
+
+let autoLockMinutes = 15;
+let lastActivityTs = Date.now();
+
+for (const event of ["pointerdown", "keydown", "wheel", "mousemove"] as const) {
+  document.addEventListener(event, () => {
+    lastActivityTs = Date.now();
+  });
+}
+
+window.setInterval(() => {
+  if (currentPhase !== "ready" || autoLockMinutes <= 0 || syncing || sending) return;
+  if (Date.now() - lastActivityTs < autoLockMinutes * 60_000) return;
+  void (async () => {
+    try {
+      await invoke("lock_wallet");
+    } catch {
+      return;
+    }
+    stopAutoSync();
+    setPhase("unlock");
+    setStatus("Wallet locked after inactivity.");
+  })();
+}, 30_000);
 
 function requireMatchingPassphrases(a: string, b: string): string | null {
   if (!a) return "Passphrase is required.";
@@ -1366,7 +1416,17 @@ async function runSync(opts: { quiet: boolean }): Promise<boolean> {
       result.new_txs > 0
         ? ` · ${result.new_txs} new transaction${result.new_txs === 1 ? "" : "s"}`
         : "";
-    setStatus(`Synced in ${timing}${newTxs}`, "success");
+    if (result.electrum_server) {
+      el.settingsActiveServer.hidden = false;
+      el.settingsActiveServer.textContent = `Last sync used: ${result.electrum_server}`;
+    }
+    if (result.warnings?.length) {
+      // Cross-check findings outrank the feel-good sync message.
+      for (const warning of result.warnings) console.warn(warning);
+      setStatus(result.warnings[0], "error");
+    } else {
+      setStatus(`Synced in ${timing}${newTxs}`, "success");
+    }
     return true;
   } catch (e) {
     syncState = "error";
@@ -1683,13 +1743,35 @@ el.sendForm.addEventListener("submit", async (event) => {
   });
 });
 
+/** tcp:// to anything but the local machine sends wallet data in cleartext. */
+function isPlaintextRemoteElectrum(url: string): boolean {
+  if (!url.startsWith("tcp://")) return false;
+  const host = url.slice("tcp://".length).replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+  return !["localhost", "127.0.0.1", "::1"].includes(host);
+}
+
 el.btnSaveSettings.addEventListener("click", async () => {
   setError(null);
+  const electrumUrl = el.settingsElectrum.value.trim();
+  if (isPlaintextRemoteElectrum(electrumUrl)) {
+    const proceed = await openConfirm({
+      title: "Unencrypted connection",
+      message:
+        "This server uses tcp:// without TLS. Everyone on the network path can read your wallet addresses and transactions, and can tamper with the responses.",
+      detail: "Use an ssl:// server unless this is your own node on a trusted network.",
+      confirmLabel: "Save anyway",
+      danger: true,
+    });
+    if (!proceed) return;
+  }
+  const autoLock = Math.max(0, Math.min(1440, Math.trunc(Number(el.settingsAutoLock.value) || 0)));
   try {
     await invoke("update_settings", {
       req: {
-        electrum_url: el.settingsElectrum.value.trim(),
+        electrum_url: electrumUrl,
         electrum_validate_domain: el.settingsValidateTls.checked,
+        electrum_use_public_fallback: el.settingsPublicFallback.checked,
+        auto_lock_minutes: autoLock,
         litecoin_rpc_url: el.settingsRpc.value.trim() || null,
         mweb_peers: el.settingsPeers.value
           .split(",")
@@ -1697,6 +1779,7 @@ el.btnSaveSettings.addEventListener("click", async () => {
           .filter(Boolean),
       },
     });
+    autoLockMinutes = autoLock;
     setStatus("Settings saved.", "success");
   } catch (e) {
     setError(String(e));

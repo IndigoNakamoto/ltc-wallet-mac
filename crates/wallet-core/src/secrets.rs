@@ -30,10 +30,24 @@ pub trait UnlockableSecretStore: SecretStore {
     fn sealing_key(&self) -> Option<[u8; 32]>;
 }
 
-const MAGIC: &[u8; 8] = b"LTCMNEM1";
+/// Legacy v1 format: Argon2id (19 MiB, t=2), plaintext = mnemonic only, and the
+/// passphrase-derived key doubled as the sealing key for related stores.
+const MAGIC_V1: &[u8; 8] = b"LTCMNEM1";
+/// Current v2 format: Argon2id (64 MiB, t=3), plaintext = 32-byte random sealing
+/// key || mnemonic. Keeping the sealing key independent of the KDF output means
+/// future KDF parameter bumps never orphan data sealed under it.
+const MAGIC_V2: &[u8; 8] = b"LTCMNEM2";
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 const KEY_LEN: usize = 32;
+
+/// Result of decrypting a mnemonic blob of any supported version.
+struct Opened {
+    mnemonic: Zeroizing<String>,
+    sealing_key: Zeroizing<[u8; KEY_LEN]>,
+    /// True when the blob is v1 and should be transparently upgraded to v2.
+    legacy: bool,
+}
 
 /// File-backed mnemonic store (mode `0600`) — plaintext (legacy / tests with MemoryStore preferred).
 pub struct FileSecretStore {
@@ -115,8 +129,23 @@ impl EncryptedFileSecretStore {
         self.plaintext_path.is_file()
     }
 
-    fn derive_key(passphrase: &str, salt: &[u8]) -> Result<[u8; KEY_LEN], WalletError> {
-        let params = Params::new(19_456, 2, 1, Some(KEY_LEN))
+    fn derive_key_v1(passphrase: &str, salt: &[u8]) -> Result<[u8; KEY_LEN], WalletError> {
+        Self::derive_key(passphrase, salt, 19_456, 2)
+    }
+
+    /// v2 parameters: 64 MiB, t=3, p=1 — comfortably above the OWASP minimum
+    /// while staying under a second on typical desktop hardware.
+    fn derive_key_v2(passphrase: &str, salt: &[u8]) -> Result<[u8; KEY_LEN], WalletError> {
+        Self::derive_key(passphrase, salt, 65_536, 3)
+    }
+
+    fn derive_key(
+        passphrase: &str,
+        salt: &[u8],
+        m_kib: u32,
+        t_cost: u32,
+    ) -> Result<[u8; KEY_LEN], WalletError> {
+        let params = Params::new(m_kib, t_cost, 1, Some(KEY_LEN))
             .map_err(|e| WalletError::SecretStore(format!("argon2 params: {e}")))?;
         let argon = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let mut key = [0u8; KEY_LEN];
@@ -126,49 +155,94 @@ impl EncryptedFileSecretStore {
         Ok(key)
     }
 
-    fn seal(passphrase: &str, mnemonic: &str) -> Result<Vec<u8>, WalletError> {
+    /// Seal in the current (v2) format: plaintext = sealing_key || mnemonic.
+    fn seal(
+        passphrase: &str,
+        mnemonic: &str,
+        sealing_key: &[u8; KEY_LEN],
+    ) -> Result<Vec<u8>, WalletError> {
         let mut salt = [0u8; SALT_LEN];
         let mut nonce_bytes = [0u8; NONCE_LEN];
         rand::thread_rng().fill_bytes(&mut salt);
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
-        let mut key = Self::derive_key(passphrase, &salt)?;
+        let mut key = Self::derive_key_v2(passphrase, &salt)?;
         let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
         let nonce = Nonce::from_slice(&nonce_bytes);
+        let mut plain =
+            Zeroizing::new(Vec::with_capacity(KEY_LEN + mnemonic.trim().len()));
+        plain.extend_from_slice(sealing_key);
+        plain.extend_from_slice(mnemonic.trim().as_bytes());
         let ciphertext = cipher
-            .encrypt(nonce, mnemonic.trim().as_bytes())
+            .encrypt(nonce, plain.as_slice())
             .map_err(|_| WalletError::SecretStore("encrypt failed".into()))?;
         key.zeroize();
-        let mut out = Vec::with_capacity(MAGIC.len() + SALT_LEN + NONCE_LEN + ciphertext.len());
-        out.extend_from_slice(MAGIC);
+        let mut out =
+            Vec::with_capacity(MAGIC_V2.len() + SALT_LEN + NONCE_LEN + ciphertext.len());
+        out.extend_from_slice(MAGIC_V2);
         out.extend_from_slice(&salt);
         out.extend_from_slice(&nonce_bytes);
         out.extend_from_slice(&ciphertext);
         Ok(out)
     }
 
-    fn open(passphrase: &str, blob: &[u8]) -> Result<(String, [u8; KEY_LEN]), WalletError> {
-        if blob.len() < MAGIC.len() + SALT_LEN + NONCE_LEN + 16 {
+    /// Decrypt a blob of either supported version.
+    fn open(passphrase: &str, blob: &[u8]) -> Result<Opened, WalletError> {
+        if blob.len() < MAGIC_V2.len() + SALT_LEN + NONCE_LEN + 16 {
             return Err(WalletError::SecretStore(
                 "encrypted mnemonic file is corrupt or truncated".into(),
             ));
         }
-        if &blob[..MAGIC.len()] != MAGIC {
+        let magic = &blob[..MAGIC_V2.len()];
+        let legacy = if magic == MAGIC_V2 {
+            false
+        } else if magic == MAGIC_V1 {
+            true
+        } else {
             return Err(WalletError::SecretStore(
                 "encrypted mnemonic file has unknown format".into(),
             ));
-        }
-        let salt = &blob[MAGIC.len()..MAGIC.len() + SALT_LEN];
-        let nonce_bytes = &blob[MAGIC.len() + SALT_LEN..MAGIC.len() + SALT_LEN + NONCE_LEN];
-        let ciphertext = &blob[MAGIC.len() + SALT_LEN + NONCE_LEN..];
-        let key = Self::derive_key(passphrase, salt)?;
+        };
+        let salt = &blob[MAGIC_V2.len()..MAGIC_V2.len() + SALT_LEN];
+        let nonce_bytes = &blob[MAGIC_V2.len() + SALT_LEN..MAGIC_V2.len() + SALT_LEN + NONCE_LEN];
+        let ciphertext = &blob[MAGIC_V2.len() + SALT_LEN + NONCE_LEN..];
+        let mut key = if legacy {
+            Self::derive_key_v1(passphrase, salt)?
+        } else {
+            Self::derive_key_v2(passphrase, salt)?
+        };
         let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
         let nonce = Nonce::from_slice(nonce_bytes);
-        let plain = cipher.decrypt(nonce, ciphertext).map_err(|_| {
-            WalletError::IncorrectPassphrase
-        })?;
-        let mnemonic = String::from_utf8(plain)
-            .map_err(|_| WalletError::SecretStore("mnemonic is not valid UTF-8".into()))?;
-        Ok((mnemonic, key))
+        let plain = Zeroizing::new(
+            cipher
+                .decrypt(nonce, ciphertext)
+                .map_err(|_| WalletError::IncorrectPassphrase)?,
+        );
+        if legacy {
+            // v1 carried only the mnemonic; the derived key doubled as the sealing key.
+            let mnemonic = String::from_utf8(plain.to_vec())
+                .map_err(|_| WalletError::SecretStore("mnemonic is not valid UTF-8".into()))?;
+            Ok(Opened {
+                mnemonic: Zeroizing::new(mnemonic),
+                sealing_key: Zeroizing::new(key),
+                legacy: true,
+            })
+        } else {
+            key.zeroize();
+            if plain.len() < KEY_LEN {
+                return Err(WalletError::SecretStore(
+                    "encrypted mnemonic payload is truncated".into(),
+                ));
+            }
+            let mut sealing_key = [0u8; KEY_LEN];
+            sealing_key.copy_from_slice(&plain[..KEY_LEN]);
+            let mnemonic = String::from_utf8(plain[KEY_LEN..].to_vec())
+                .map_err(|_| WalletError::SecretStore("mnemonic is not valid UTF-8".into()))?;
+            Ok(Opened {
+                mnemonic: Zeroizing::new(mnemonic),
+                sealing_key: Zeroizing::new(sealing_key),
+                legacy: false,
+            })
+        }
     }
 }
 
@@ -235,19 +309,22 @@ impl EncryptedFileSecretStore {
         if passphrase.is_empty() {
             return Err(WalletError::SecretStore("passphrase must not be empty".into()));
         }
-        let blob = Self::seal(passphrase, mnemonic)?;
+        let mut sealing_key = [0u8; KEY_LEN];
+        rand::thread_rng().fill_bytes(&mut sealing_key);
+        let blob = Self::seal(passphrase, mnemonic, &sealing_key)?;
         write_bytes(&self.path, &blob)?;
         // Verify round-trip before deleting any plaintext.
-        let (opened, key) = Self::open(passphrase, &blob)?;
-        if opened.trim() != mnemonic.trim() {
+        let opened = Self::open(passphrase, &blob)?;
+        if opened.mnemonic.trim() != mnemonic.trim() {
             let _ = remove_if_exists(&self.path);
             return Err(WalletError::SecretStore(
                 "encrypted store did not persist mnemonic".into(),
             ));
         }
+        sealing_key.zeroize();
         let mut inner = self.lock_inner()?;
-        inner.unlocked_mnemonic = Some(Zeroizing::new(opened));
-        inner.sealing_key = Some(Zeroizing::new(key));
+        inner.unlocked_mnemonic = Some(opened.mnemonic);
+        inner.sealing_key = Some(opened.sealing_key);
         let _ = remove_if_exists(&self.plaintext_path);
         Ok(())
     }
@@ -274,10 +351,35 @@ impl UnlockableSecretStore for EncryptedFileSecretStore {
             ));
         }
         let blob = fs::read(&self.path).map_err(|e| WalletError::SecretStore(e.to_string()))?;
-        let (mnemonic, key) = Self::open(passphrase, &blob)?;
+        let mut opened = Self::open(passphrase, &blob)?;
+        if opened.legacy {
+            // Transparent v1 → v2 upgrade: fresh random sealing key, stronger KDF.
+            // Only adopt the new key once the rewritten file verifies; on any
+            // failure keep the legacy key so the on-disk v1 file stays usable.
+            let mut new_key = [0u8; KEY_LEN];
+            rand::thread_rng().fill_bytes(&mut new_key);
+            let upgraded = Self::seal(passphrase, &opened.mnemonic, &new_key)
+                .and_then(|blob2| {
+                    let check = Self::open(passphrase, &blob2)?;
+                    if check.mnemonic.trim() != opened.mnemonic.trim() {
+                        return Err(WalletError::SecretStore("upgrade verify failed".into()));
+                    }
+                    write_bytes(&self.path, &blob2)
+                });
+            match upgraded {
+                Ok(()) => {
+                    opened.sealing_key = Zeroizing::new(new_key);
+                    eprintln!("secret store: upgraded mnemonic file to v2 format");
+                }
+                Err(e) => {
+                    new_key.zeroize();
+                    eprintln!("secret store: v2 upgrade failed, staying on v1 ({e})");
+                }
+            }
+        }
         let mut inner = self.lock_inner()?;
-        inner.unlocked_mnemonic = Some(Zeroizing::new(mnemonic));
-        inner.sealing_key = Some(Zeroizing::new(key));
+        inner.unlocked_mnemonic = Some(opened.mnemonic);
+        inner.sealing_key = Some(opened.sealing_key);
         Ok(())
     }
 
@@ -361,7 +463,7 @@ impl SecretStore for MemoryStore {
     }
 }
 
-fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), WalletError> {
+pub(crate) fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), WalletError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -424,6 +526,63 @@ mod tests {
         store.unlock("correct horse").unwrap();
         let got = store.get_mnemonic().unwrap().unwrap();
         assert!(got.starts_with("abandon"));
+    }
+
+    /// Build a legacy v1 blob (Argon2id 19 MiB/t=2, mnemonic-only payload).
+    fn seal_v1(passphrase: &str, mnemonic: &str) -> Vec<u8> {
+        let mut salt = [0u8; SALT_LEN];
+        let mut nonce_bytes = [0u8; NONCE_LEN];
+        rand::thread_rng().fill_bytes(&mut salt);
+        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        let key = EncryptedFileSecretStore::derive_key_v1(passphrase, &salt).unwrap();
+        let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
+        let ciphertext = cipher
+            .encrypt(Nonce::from_slice(&nonce_bytes), mnemonic.trim().as_bytes())
+            .unwrap();
+        let mut out = Vec::new();
+        out.extend_from_slice(MAGIC_V1);
+        out.extend_from_slice(&salt);
+        out.extend_from_slice(&nonce_bytes);
+        out.extend_from_slice(&ciphertext);
+        out
+    }
+
+    #[test]
+    fn v1_file_unlocks_and_upgrades_to_v2() {
+        let dir = tempdir().unwrap();
+        let enc = dir.path().join("wallet.mnemonic.enc");
+        let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        fs::write(&enc, seal_v1("pass", mnemonic)).unwrap();
+        let store =
+            EncryptedFileSecretStore::new(&enc, dir.path().join("wallet.mnemonic"));
+        store.unlock("pass").unwrap();
+        assert_eq!(store.get_mnemonic().unwrap().unwrap(), mnemonic);
+        let key_after_upgrade = store.sealing_key().unwrap();
+        // File must now be v2 and unlock again with the same passphrase and
+        // the same (persisted) sealing key.
+        let blob = fs::read(&enc).unwrap();
+        assert_eq!(&blob[..8], MAGIC_V2);
+        store.lock();
+        store.unlock("pass").unwrap();
+        assert_eq!(store.sealing_key().unwrap(), key_after_upgrade);
+        assert!(matches!(
+            store.unlock("wrong"),
+            Err(WalletError::IncorrectPassphrase)
+        ));
+    }
+
+    #[test]
+    fn sealing_key_survives_reencryption() {
+        let dir = tempdir().unwrap();
+        let store = EncryptedFileSecretStore::new(
+            dir.path().join("wallet.mnemonic.enc"),
+            dir.path().join("wallet.mnemonic"),
+        );
+        store.set_with_passphrase("pw", "abandon ability able").unwrap();
+        let key = store.sealing_key().unwrap();
+        store.lock();
+        store.unlock("pw").unwrap();
+        assert_eq!(store.sealing_key().unwrap(), key);
     }
 
     #[test]

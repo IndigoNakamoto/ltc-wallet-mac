@@ -2,6 +2,10 @@
 #
 # Sibling path deps are checked out next to this repo using SHAs in deps/pins.env,
 # mirroring release.yml. All third-party actions are pinned to commit SHAs.
+#
+# The weekly schedule re-runs the supply-chain and frontend audit jobs so new
+# advisories against already-merged dependencies are caught without waiting
+# for the next code change. The heavyweight Rust build is skipped then.
 name: CI
 
 on:
@@ -9,6 +13,9 @@ on:
   push:
     branches:
       - main
+  schedule:
+    # Mondays 06:00 UTC: weekly advisory sweep (cargo audit / cargo deny / npm audit).
+    - cron: "0 6 * * 1"
 
 permissions:
   contents: read
@@ -17,6 +24,8 @@ jobs:
   rust:
     name: Rust build, clippy, tests
     runs-on: ubuntu-22.04
+    # Code didn't change on a schedule tick; only advisories may have.
+    if: github.event_name != 'schedule'
 
     steps:
       - name: Checkout wallet

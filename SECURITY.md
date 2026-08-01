@@ -24,10 +24,14 @@ servers, and social engineering.
 
 | Asset | Protection |
 | --- | --- |
-| Recovery phrase / seed | Encrypted at rest in `wallet.mnemonic.enc`: Argon2id (19 MiB, t=2) key derivation + ChaCha20-Poly1305 AEAD, file mode `0600`. Decrypted only into process memory while unlocked; zeroized on lock. |
+| Recovery phrase / seed | Encrypted at rest in `wallet.mnemonic.enc`: Argon2id (64 MiB, t=3) key derivation + ChaCha20-Poly1305 AEAD, file mode `0600`. Files created by older versions (19 MiB, t=2) are transparently re-encrypted with the stronger parameters on the next unlock. Decrypted only into process memory while unlocked; zeroized on lock. |
 | Passphrase | Never stored; used only to derive the encryption key. Wrong passphrases fail AEAD authentication. |
+| MWEB data at rest | The MWEB coin store, sync state, receive index and history are sealed with ChaCha20-Poly1305 under a random key stored inside the encrypted seed file. Plaintext-era files are migrated to the sealed format and deleted on the first sync after unlock. |
+| Idle sessions | The wallet auto-locks (default 15 minutes, configurable, 0 = off) after no user input, wiping decrypted key material from memory. |
 | Transactions | Built and signed locally; keys never leave the process. Broadcast goes to your configured Electrum server (transparent) or MWEB P2P peers / litecoind RPC. |
-| Network transport | Electrum connections use TLS. Certificate validation (CA chain + hostname) is **on by default**; it can be disabled in Settings for self-signed community servers, which trades MITM protection for availability. |
+| Network transport | Electrum connections use TLS. Certificate validation (CA chain + hostname) is **on by default**; it can be disabled in Settings for self-signed community servers, which trades MITM protection for availability. The UI warns before saving a non-localhost `tcp://` (unencrypted) server. |
+| Server honesty | After each sync the wallet asks a second, independent Electrum server for block headers only (never your addresses) and warns if the servers disagree or the sync server appears to be withholding blocks. Each successful MWEB sync is cross-checked by verifying the downloaded UTXO leafset against the MWEB header reported by up to two peers. |
+| Fallback privacy | If you run your own Electrum server you can disable public-server fallback in Settings, so your addresses are never sent to public servers; the active server is always shown in Settings. |
 | Destructive actions | Wiping wallet data requires typing a confirmation phrase, enforced at the IPC boundary, not just in the UI. |
 
 ### What the wallet does NOT protect against
@@ -36,16 +40,18 @@ servers, and social engineering.
   memory while the wallet is unlocked, keylog your passphrase, or replace the
   app binary. No desktop wallet survives this; use a hardware wallet or an
   offline machine for large amounts.
-- **Unencrypted metadata.** `wallet.sqlite`, `mweb.sqlite`, and the history/
-  sync files store addresses, balances, and transaction history in plaintext.
-  Someone with access to your data directory learns your financial history
-  (but not your keys). Use full-disk encryption (FileVault/LUKS).
+- **Unencrypted transparent-wallet metadata.** `wallet.sqlite` (the BDK
+  transparent-side database) stores addresses, balances, and transaction
+  history in plaintext. Someone with access to your data directory learns your
+  transparent financial history (but not your keys, and not your MWEB data,
+  which is sealed). Use full-disk encryption (FileVault/LUKS).
 - **Network privacy.** There is no Tor/proxy support. Your Electrum server
   learns your addresses and IP; DNS-discovered MWEB peers learn your IP.
-- **Server lies by omission.** A malicious Electrum server can hide incoming
-  transactions or delay broadcast (it cannot steal funds or forge history
-  without breaking the transaction chain). MWEB sync trusts the connected peer
-  for the UTXO set; multi-peer cross-checking is not implemented.
+- **Colluding servers.** The post-sync cross-checks compare independent
+  sources, which turns "one dishonest server can lie to you" into "two
+  independent sources must collude". They compare only chain tips and MWEB
+  UTXO roots; a server can still hide an individual unconfirmed transaction
+  from you until it confirms.
 - **Physical attackers with your passphrase**, shoulder surfing, or coerced
   disclosure.
 
@@ -63,11 +69,14 @@ vendored dependencies.
 
 ## Known limitations (accepted for now)
 
-- Wallet SQLite databases are not encrypted at rest (seed file is).
+- The transparent-side `wallet.sqlite` is not encrypted at rest (the seed and
+  all MWEB data are).
 - No Tor or proxy support.
 - Testnet Electrum servers use self-signed certificates, so testnet generally
   requires disabling TLS validation in Settings.
-- MWEB sync trusts a single peer per sync pass.
+- Electrum cross-checking compares block headers only; it detects a server on
+  a wrong chain or withholding blocks, not omission of individual mempool
+  transactions.
 - macOS releases are unsigned until Apple Developer credentials are set up
   (CI is already wired to sign automatically once the secrets exist).
 - The `wipe` escape hatch intentionally works without the passphrase — it is
@@ -83,5 +92,14 @@ Only the latest release receives security fixes.
 
 Every release attaches `SHA256SUMS-<platform>.txt` files generated in CI, and
 its notes list the sibling dependency SHAs it was built from. CI builds only
-from the pinned SHAs in `deps/pins.env`. See
-[`docs/VERIFYING.md`](docs/VERIFYING.md) for the full verification guide.
+from the pinned SHAs in `deps/pins.env`. Additionally:
+
+- **Build provenance attestations**: every artifact digest is attested by
+  GitHub's build provenance service, linking it to the exact commit and
+  workflow run. Verify with `gh attestation verify <file> --repo
+  IndigoNakamoto/ltc-wallet-mac`.
+- **Minisign signatures** (once the signing key is published): each
+  `SHA256SUMS` file is signed with an offline-verifiable minisign key, so
+  verification does not depend on GitHub's infrastructure.
+
+See [`docs/VERIFYING.md`](docs/VERIFYING.md) for the full verification guide.

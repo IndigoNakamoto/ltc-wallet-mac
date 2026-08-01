@@ -17,10 +17,19 @@ pub type ElectrumClient = BdkElectrumClient<Client>;
 /// certificate is accepted, which many community Electrum-LTC servers with
 /// self-signed certificates require.
 pub fn connect(url: &str, validate_domain: bool) -> Result<BdkElectrumClient<Client>, WalletError> {
-    // Timeout is seconds (u8); keeps flaky servers from hanging the UI forever.
+    connect_with_timeout(url, validate_domain, 30)
+}
+
+/// [`connect`] with an explicit timeout (seconds). Cross-checks use a short
+/// timeout so a dead second server cannot stall the sync it is auditing.
+pub fn connect_with_timeout(
+    url: &str,
+    validate_domain: bool,
+    timeout_secs: u8,
+) -> Result<BdkElectrumClient<Client>, WalletError> {
     let config = ConfigBuilder::new()
         .validate_domain(validate_domain)
-        .timeout(Some(30))
+        .timeout(Some(timeout_secs))
         .build();
     let client = Client::from_config(url, config).map_err(|e| {
         let mut msg = format!("failed to connect to {url} (timed out or unreachable): {e}");
@@ -58,6 +67,58 @@ pub fn connect_first(
         "no Electrum server reachable — {}",
         errors.join("; ")
     )))
+}
+
+/// How many blocks two servers may differ at the tip before it is suspicious
+/// (normal propagation delay, not disagreement).
+const TIP_LAG_TOLERANCE: u32 = 2;
+
+/// Cross-check the chain served by `url` against our local chain after a sync.
+///
+/// This is deliberately privacy-preserving: only block headers are requested,
+/// never our scripts, so the second server learns nothing about the wallet.
+/// It catches a sync server that is on a different chain or withholding
+/// blocks; it cannot catch omission of individual transactions.
+///
+/// Returns `Ok(None)` when consistent, `Ok(Some(warning))` on disagreement,
+/// and `Err` when the second server was unreachable (callers should skip,
+/// not alarm).
+pub fn cross_check_tip(
+    url: &str,
+    validate_domain: bool,
+    local_tip_height: u32,
+    local_hash_at: &dyn Fn(u32) -> Option<bdk_wallet::bitcoin::BlockHash>,
+) -> Result<Option<String>, WalletError> {
+    let client = connect_with_timeout(url, validate_domain, 10)?;
+    handshake(&client).map_err(|e| WalletError::Electrum(e.to_string()))?;
+    let sub = client
+        .inner
+        .block_headers_subscribe()
+        .map_err(|e| WalletError::Electrum(e.to_string()))?;
+    let their_tip = sub.height as u32;
+    if their_tip > local_tip_height.saturating_add(TIP_LAG_TOLERANCE) {
+        return Ok(Some(format!(
+            "cross-check: independent server {url} is at height {their_tip}, {} blocks ahead of \
+             the server used for this sync — that server may be lagging or withholding blocks",
+            their_tip - local_tip_height
+        )));
+    }
+    let common = local_tip_height.min(their_tip);
+    let Some(local_hash) = local_hash_at(common) else {
+        return Ok(None);
+    };
+    let their_header = client
+        .inner
+        .block_header(common as usize)
+        .map_err(|e| WalletError::Electrum(e.to_string()))?;
+    if their_header.block_hash() != local_hash {
+        return Ok(Some(format!(
+            "WARNING: Electrum servers disagree at height {common}: {url} reports a different \
+             block than the server used for this sync. One of them may be dishonest — verify \
+             your balance against a block explorer or your own node before transacting"
+        )));
+    }
+    Ok(None)
 }
 
 /// Confirm the server actually answers requests. Introduce ourselves with

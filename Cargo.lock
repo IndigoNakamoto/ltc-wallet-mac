@@ -280,6 +280,7 @@ dependencies = [
  "rand 0.8.7",
  "rusqlite",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2344,7 +2345,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "ltc-wallet"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",

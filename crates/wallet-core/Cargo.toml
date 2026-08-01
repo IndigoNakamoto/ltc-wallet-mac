@@ -25,6 +25,7 @@ bdk_mweb = { path = "../../../bdk/crates/mweb", default-features = false, featur
     "zkp",
     "persist",
     "encrypt",
+    "encrypt-changeset",
     "rusqlite",
     "lip0006",
     "serde",
