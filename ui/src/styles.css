@@ -23,6 +23,8 @@
   --radius-sm: 9px;
   --radius: 13px;
   --radius-lg: 20px;
+  /* Nexus sheet corner: 3% of screen height. */
+  --sheet-radius: 26px;
 
   --nav-w: 15rem;
   --nav-w-rail: 4.5rem;
@@ -46,16 +48,6 @@
   --text-glass-1: #ffffff;
   --text-glass-2: rgba(255, 255, 255, 0.78);
   --text-glass-3: rgba(255, 255, 255, 0.55);
-
-  /* The Nexus hero scene: horizontally stretched ellipse, near-black core. */
-  --hero-gradient: radial-gradient(
-    160% 145% at 50% -35%,
-    #000001 0%,
-    #08208a 28.5%,
-    #1249ea 50.3%,
-    #60a2f9 75.6%,
-    #8fbcfb 100%
-  );
 }
 
 :root,
@@ -283,6 +275,7 @@ code {
 
 /* Rounded panels get the Nexus hairline: a gradient ring masked to 1px. */
 .auth .card::before,
+.modal-panel::before,
 .toast::before {
   content: "";
   position: absolute;
@@ -298,6 +291,7 @@ code {
 }
 
 .auth .card,
+.modal-panel,
 .toast {
   position: relative;
   background: var(--panel-bg);
@@ -310,13 +304,19 @@ code {
 /* Solid-ish fallback when backdrop-filter is unavailable. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .auth .card,
+  .modal-panel,
   .toast {
     background: var(--surface-1);
   }
 
   .nav,
-  .topbar {
+  .topbar,
+  .tab-pill {
     background: rgba(6, 16, 56, 0.72);
+  }
+
+  .overlay {
+    background: rgba(10, 28, 78, 0.88);
   }
 }
 
@@ -572,6 +572,7 @@ code {
 
 .views {
   flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 1.5rem;
 }
@@ -582,6 +583,18 @@ code {
   gap: 1rem;
   max-width: 46rem;
   margin: 0 auto;
+}
+
+/* The Balance view runs edge to edge so its sheet can meet the window bottom. */
+.views-balance {
+  display: flex;
+  overflow: hidden;
+  padding: 0;
+}
+
+.views-balance > .view {
+  max-width: none;
+  margin: 0;
 }
 
 /* Theme toggle icon reflects the resolved theme. */
@@ -610,42 +623,58 @@ code {
   box-shadow: none;
 }
 
-/* The hero balance card carries the Nexus gradient scene itself. */
-.card-hero {
-  position: relative;
-  gap: 0.3rem;
-  padding: 1.5rem 1.4rem 1.55rem;
-  background: var(--hero-gradient);
-  border: 0;
-  box-shadow: var(--glass-shadow);
-  color: var(--text-glass-1);
-  overflow: hidden;
+/* ---------------------------------------------------------------------------
+   Balance view: hero on the gradient, glass pills, light sheet
+   --------------------------------------------------------------------------- */
+
+.view-balance {
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: 0;
 }
 
-.card-hero::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1px;
-  background: var(--glass-ring);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  pointer-events: none;
+.hero {
+  /* Shrinks before the sheet does, so a short window keeps the sheet usable. */
+  flex: 0 1 auto;
+  overflow: hidden;
+  padding: 1.35rem 1.5rem 0.75rem;
+  max-height: 21rem;
+  color: var(--text-glass-1);
+  transition: max-height 0.2s var(--ease), padding-bottom 0.2s var(--ease);
+}
+
+.hero-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-width: 46rem;
+  margin: 0 auto;
+}
+
+/* An open card folds the hero down to just the label and the headline number.
+   The fold-away rows keep their layout box, so this height is tuned to end
+   right below the balance rather than leaving dead space above the pills. */
+.view-balance[data-sheet="expanded"] .hero {
+  max-height: 5.4rem;
+  padding-bottom: 0.35rem;
+}
+
+.view-balance[data-sheet="expanded"] .balance-total {
+  font-size: clamp(1.3rem, 3vw, 1.65rem);
+}
+
+.view-balance[data-sheet="expanded"] .balance-sats,
+.view-balance[data-sheet="expanded"] .balance-note,
+.view-balance[data-sheet="expanded"] .hero-stats {
+  opacity: 0;
 }
 
 .hero-label {
-  color: var(--text-glass-2);
+  color: rgba(255, 255, 255, 0.72);
   font-size: 0.78rem;
   font-weight: 560;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-}
-
-.card-hero .hero-label {
-  color: rgba(255, 255, 255, 0.72);
 }
 
 .balance-total {
@@ -654,12 +683,14 @@ code {
   letter-spacing: -0.024em;
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
+  transition: font-size 0.2s var(--ease);
 }
 
 .balance-sats {
   color: rgba(255, 255, 255, 0.66);
   font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
+  transition: opacity 0.15s var(--ease);
 }
 
 .balance-note {
@@ -667,6 +698,169 @@ code {
   color: #ffd88a;
   font-size: 0.85rem;
   font-variant-numeric: tabular-nums;
+  transition: opacity 0.15s var(--ease);
+}
+
+.hero-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.9rem;
+  transition: opacity 0.15s var(--ease);
+}
+
+.hero-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.6rem 0.8rem;
+  border-radius: var(--radius);
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 0.5px 0 rgba(238, 235, 235, 0.5), inset 0 0 0 0.5px rgba(216, 210, 210, 0.22);
+}
+
+.hero-stat .stat-label {
+  color: rgba(255, 255, 255, 0.62);
+}
+
+/* Pills straddle the sheet's top edge, as in Nexus. */
+.tab-pills-wrap {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  margin-bottom: -1.3rem;
+  padding: 0 1.5rem;
+}
+
+.tab-pills {
+  display: flex;
+  gap: 0.5rem;
+  max-width: 46rem;
+  margin: 0 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tab-pills::-webkit-scrollbar {
+  display: none;
+}
+
+.tab-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 0 0 auto;
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: 999px;
+  /* A fixed navy tint rather than clear glass: the pill straddles the sheet
+     edge, so its white label needs a dark backing on both halves. */
+  background: rgba(6, 18, 58, 0.46);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: inset 0 0.5px 0 rgba(238, 235, 235, 0.67), inset 0 0 0 0.5px rgba(216, 210, 210, 0.3),
+    0 2px 4px rgba(0, 0, 0, 0.07);
+  color: var(--text-glass-1);
+  font: inherit;
+  font-weight: 560;
+  cursor: pointer;
+  transition: background 0.12s var(--ease), color 0.12s var(--ease), transform 0.06s var(--ease);
+}
+
+.tab-pill:hover {
+  background: rgba(12, 32, 96, 0.58);
+}
+
+.tab-pill:active {
+  transform: translateY(1px);
+}
+
+.tab-pill:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.85);
+  outline-offset: 2px;
+}
+
+.tab-pill[aria-selected="true"] {
+  background: rgba(255, 255, 255, 0.92);
+  color: #1162e6;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
+}
+
+.sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* Zero basis: the sheet takes leftover height and scrolls, instead of letting
+     a long transaction list push the hero out of shape. */
+  flex: 1 1 0;
+  min-height: 9rem;
+  background: var(--surface-1);
+  border-top-left-radius: var(--sheet-radius);
+  border-top-right-radius: var(--sheet-radius);
+  box-shadow: 0 -10px 34px -14px rgba(0, 0, 0, 0.45);
+}
+
+.drag-strip {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 100%;
+  height: 1.8rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.drag-handle {
+  width: 2.5rem;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  opacity: 0.55;
+  transition: opacity 0.12s var(--ease);
+}
+
+.drag-strip:hover .drag-handle,
+.drag-strip:focus-visible .drag-handle {
+  opacity: 1;
+}
+
+.sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.25rem 1.5rem 1.5rem;
+}
+
+/* Card swap fade matches the Nexus 300ms fade-in. */
+.sheet-card {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  gap: 0.85rem;
+  width: 100%;
+  max-width: 46rem;
+  margin: 0 auto;
+  animation: card-in 0.3s var(--ease);
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 .skeleton {
@@ -677,7 +871,7 @@ code {
   color: transparent;
 }
 
-.card-hero .skeleton {
+.hero .skeleton {
   background: linear-gradient(
     90deg,
     rgba(255, 255, 255, 0.14),
@@ -691,23 +885,6 @@ code {
   to {
     background-position: -200% 0;
   }
-}
-
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
-  gap: 0.75rem;
-}
-
-.stat {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  padding: 0.85rem 1rem;
-  background: var(--surface-1);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-1);
 }
 
 .stat-label {
@@ -800,6 +977,11 @@ code {
 
 .btn-icon {
   padding: 0.5rem;
+}
+
+.btn-sm {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.82rem;
 }
 
 .row {
@@ -1047,8 +1229,21 @@ textarea {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.9rem;
-  padding: 0.75rem 0;
+  margin: 0 -0.6rem;
+  padding: 0.75rem 0.6rem;
   border-bottom: 1px solid rgba(214, 216, 218, 0.3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s var(--ease);
+}
+
+.tx-row:hover {
+  background: var(--surface-3);
+}
+
+.tx-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 :root[data-theme="dark"] .tx-row {
@@ -1227,6 +1422,223 @@ textarea {
 }
 
 /* ---------------------------------------------------------------------------
+   Modal — glass panel over the Nexus dimmed blue blur
+   --------------------------------------------------------------------------- */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  /* The Nexus PIN-modal backdrop. */
+  background: rgba(19, 58, 138, 0.6);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  animation: overlay-in 0.25s var(--ease);
+}
+
+@keyframes overlay-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.modal-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  width: 100%;
+  max-width: 30rem;
+  max-height: 100%;
+  padding: 1.25rem 1.35rem 1.35rem;
+  border-radius: var(--radius-lg);
+  color: var(--text-1);
+  animation: panel-up 0.25s var(--ease);
+}
+
+.modal-panel-wide {
+  max-width: 34rem;
+}
+
+@keyframes panel-up {
+  from {
+    opacity: 0;
+    transform: translateY(1.5rem);
+  }
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.modal-title {
+  font-size: 1.05rem;
+  font-weight: 620;
+}
+
+.modal-close {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  background: var(--surface-3);
+  color: var(--text-1);
+}
+
+.modal-close .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.55rem;
+}
+
+.modal-actions .modal-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-right: auto;
+}
+
+.modal-error {
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.detail-amount {
+  font-size: 1.55rem;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.detail-amount.in {
+  color: var(--accent);
+}
+
+.detail-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-row:last-child {
+  border-bottom: 0;
+}
+
+.detail-label {
+  flex: 0 0 auto;
+  color: var(--text-2);
+  font-size: 0.82rem;
+}
+
+.detail-value {
+  min-width: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  word-break: break-all;
+}
+
+.detail-value.mono {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Loading overlay
+   --------------------------------------------------------------------------- */
+
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgba(4, 8, 24, 0.45);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.loading-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  max-width: 24rem;
+  padding: 1.5rem 2rem;
+  border-radius: var(--radius-lg);
+  background: var(--panel-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-shadow);
+  color: var(--text-1);
+  text-align: center;
+}
+
+.spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 2.5px solid var(--border-strong);
+  border-top-color: var(--accent);
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-label {
+  color: var(--text-2);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
    Responsive: sidebar -> icon rail -> top tab bar
    --------------------------------------------------------------------------- */
 
@@ -1263,6 +1675,10 @@ textarea {
 
   .views {
     padding: 1.25rem;
+  }
+
+  .views-balance {
+    padding: 0;
   }
 }
 
@@ -1305,6 +1721,25 @@ textarea {
 
   .views {
     padding: 1rem;
+  }
+
+  .views-balance {
+    padding: 0;
+  }
+
+  .hero {
+    padding: 1rem 1rem 0.6rem;
+    max-height: 24rem;
+  }
+
+  .tab-pills-wrap,
+  .sheet-body {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .modal-panel {
+    max-height: calc(100% - 1rem);
   }
 
   .receive-row {

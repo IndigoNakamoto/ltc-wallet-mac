@@ -99,16 +99,23 @@ const PHASE_LABELS: Record<Phase, string> = {
   migrate: "Encryption required",
 };
 
-const VIEWS = ["balance", "receive", "send", "private", "history", "settings"] as const;
+/** Top-level panes. Send/Receive/Private are cards inside the Balance sheet. */
+const VIEWS = ["balance", "history", "settings"] as const;
 type View = (typeof VIEWS)[number];
 
 const VIEW_TITLES: Record<View, string> = {
   balance: "Balance",
-  receive: "Receive",
-  send: "Send",
-  private: "Private",
   history: "History",
   settings: "Settings",
+};
+
+const CARDS = ["send", "receive", "private"] as const;
+type Card = (typeof CARDS)[number];
+
+const CARD_TITLES: Record<Card, string> = {
+  send: "Send",
+  receive: "Receive",
+  private: "Private",
 };
 
 type StatusKind = "info" | "success" | "error";
@@ -128,6 +135,7 @@ const THEME_ORDER: ThemePref[] = ["auto", "light", "dark"];
 const DUST_LITOSHIS = 2940;
 const AUTO_SYNC_MS = 60_000;
 const QR_CSS_SIZE = 176;
+const RECENT_TX_COUNT = 6;
 
 const SVG_ARROW_IN =
   '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v13"/><path d="m6 13 6 6 6-6"/></svg>';
@@ -167,6 +175,21 @@ const el = {
   mwebQr: document.querySelector<HTMLCanvasElement>("#mweb-qr")!,
   mwebAddress: document.querySelector<HTMLElement>("#mweb-address")!,
   mwebActions: document.querySelector<HTMLElement>("#mweb-actions")!,
+  views: document.querySelector<HTMLElement>("#views")!,
+  sheetBody: document.querySelector<HTMLElement>("#sheet-body")!,
+  dragStrip: document.querySelector<HTMLButtonElement>("#drag-strip")!,
+  cardTx: document.querySelector<HTMLElement>("#card-tx")!,
+  txListRecent: document.querySelector<HTMLUListElement>("#tx-list-recent")!,
+  txEmptyRecent: document.querySelector<HTMLElement>("#tx-empty-recent")!,
+  btnSeeAll: document.querySelector<HTMLButtonElement>("#btn-see-all")!,
+  modalOverlay: document.querySelector<HTMLElement>("#modal-overlay")!,
+  modalPanel: document.querySelector<HTMLElement>("#modal-panel")!,
+  modalTitle: document.querySelector<HTMLElement>("#modal-title")!,
+  modalBody: document.querySelector<HTMLElement>("#modal-body")!,
+  modalActions: document.querySelector<HTMLElement>("#modal-actions")!,
+  modalClose: document.querySelector<HTMLButtonElement>("#modal-close")!,
+  loadingOverlay: document.querySelector<HTMLElement>("#loading-overlay")!,
+  loadingLabel: document.querySelector<HTMLElement>("#loading-label")!,
   toast: document.querySelector<HTMLElement>("#toast")!,
   status: document.querySelector<HTMLElement>("#status")!,
   btnToastClose: document.querySelector<HTMLButtonElement>("#btn-toast-close")!,
@@ -230,12 +253,26 @@ const views = Object.fromEntries(
   ]),
 ) as Record<View, { nav: HTMLButtonElement; pane: HTMLElement }>;
 
+const cards = Object.fromEntries(
+  CARDS.map((card) => [
+    card,
+    {
+      nav: document.querySelector<HTMLButtonElement>(`#nav-${card}`)!,
+      pill: document.querySelector<HTMLButtonElement>(`#pill-${card}`)!,
+      pane: document.querySelector<HTMLElement>(`#card-${card}`)!,
+    },
+  ]),
+) as Record<Card, { nav: HTMLButtonElement; pill: HTMLButtonElement; pane: HTMLElement }>;
+
 let syncing = false;
 let sending = false;
 let currentPhase: Phase = "boot";
 let currentView: View = "balance";
+let activeCard: Card | null = null;
+let lastCard: Card = "send";
 let syncState: SyncState = "idle";
 let lastTxid: string | null = null;
+let txRecords: TxRecord[] = [];
 let autoSyncTimer: number | null = null;
 let mwebProgressTimer: number | null = null;
 let statusTimer: number | null = null;
@@ -295,20 +332,70 @@ function setPhase(next: Phase) {
   else stopAutoSync();
 }
 
-function setView(next: View) {
-  currentView = next;
-  el.viewTitle.textContent = VIEW_TITLES[next];
-  for (const view of VIEWS) {
-    const { nav, pane } = views[view];
-    const active = view === next;
+function updateTitle() {
+  el.viewTitle.textContent =
+    currentView === "balance" && activeCard ? CARD_TITLES[activeCard] : VIEW_TITLES[currentView];
+}
+
+/** Reflect activeCard on the sheet, the pills and the sidebar in one place. */
+function applyCardState() {
+  views.balance.pane.dataset.sheet = activeCard ? "expanded" : "collapsed";
+  el.cardTx.hidden = activeCard != null;
+  for (const card of CARDS) {
+    const { nav, pill, pane } = cards[card];
+    const active = activeCard === card;
     pane.hidden = !active;
+    pill.setAttribute("aria-selected", String(active));
     nav.setAttribute("aria-selected", String(active));
   }
+  views.balance.nav.setAttribute(
+    "aria-selected",
+    String(currentView === "balance" && activeCard == null),
+  );
+  el.dragStrip.setAttribute("aria-expanded", String(activeCard != null));
+  el.dragStrip.setAttribute("aria-label", activeCard ? "Collapse card" : "Open card");
+  updateTitle();
+}
+
+function setView(next: View) {
+  currentView = next;
+  // Leaving Balance folds the sheet, so the sidebar never shows two selections.
+  if (next !== "balance") activeCard = null;
+  for (const view of VIEWS) {
+    const { nav, pane } = views[view];
+    pane.hidden = view !== next;
+    nav.setAttribute("aria-selected", String(view === next));
+  }
+  el.views.classList.toggle("views-balance", next === "balance");
+  applyCardState();
+}
+
+function setCard(next: Card | null) {
+  if (next && cards[next].pill.hidden) return;
+  activeCard = next;
+  if (next) {
+    lastCard = next;
+    if (currentView !== "balance") {
+      setView("balance");
+      // setView clears the card, so re-apply the requested one.
+      activeCard = next;
+    }
+  }
+  applyCardState();
+  el.sheetBody.scrollTop = 0;
 }
 
 for (const view of VIEWS) {
   views[view].nav.addEventListener("click", () => setView(view));
 }
+
+for (const card of CARDS) {
+  cards[card].nav.addEventListener("click", () => setCard(card));
+  cards[card].pill.addEventListener("click", () => setCard(activeCard === card ? null : card));
+}
+
+el.dragStrip.addEventListener("click", () => setCard(activeCard ? null : lastCard));
+el.btnSeeAll.addEventListener("click", () => setView("history"));
 
 function setStatus(message: string | null, kind: StatusKind = "info") {
   if (statusTimer != null) {
@@ -350,6 +437,307 @@ function setError(message: string | null) {
   }
   el.error.hidden = false;
   el.error.textContent = message;
+}
+
+/* ---------------------------------------------------------------------------
+   Glass modal shell
+   --------------------------------------------------------------------------- */
+
+type ModalActionKind = "primary" | "secondary" | "ghost" | "danger";
+
+type ModalAction = {
+  id: string;
+  label: string;
+  kind?: ModalActionKind;
+  /** Nav actions sit on the left of the action row (prev/next). */
+  nav?: boolean;
+};
+
+type ModalOptions = {
+  title: string;
+  build: (body: HTMLElement) => void;
+  actions: ModalAction[];
+  wide?: boolean;
+  dismissable?: boolean;
+  focus?: () => HTMLElement | null;
+  onKey?: (event: KeyboardEvent, close: (id: string) => void) => void;
+};
+
+const FOCUSABLE =
+  'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+
+let modalResolve: ((id: string | null) => void) | null = null;
+let modalRestoreFocus: HTMLElement | null = null;
+let modalKeyHandler: ((event: KeyboardEvent) => void) | null = null;
+let modalDismissable = true;
+
+function modalFocusables(): HTMLElement[] {
+  return Array.from(el.modalPanel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (node) => !node.hidden && node.offsetParent !== null,
+  );
+}
+
+function closeModal(result: string | null) {
+  const resolve = modalResolve;
+  if (!resolve) return;
+  modalResolve = null;
+  if (modalKeyHandler) {
+    document.removeEventListener("keydown", modalKeyHandler, true);
+    modalKeyHandler = null;
+  }
+  el.modalOverlay.hidden = true;
+  el.modalBody.textContent = "";
+  el.modalActions.textContent = "";
+  el.modalPanel.classList.remove("modal-panel-wide");
+  modalRestoreFocus?.focus();
+  modalRestoreFocus = null;
+  resolve(result);
+}
+
+function openModal(opts: ModalOptions): Promise<string | null> {
+  // One dialog at a time: an already-open one resolves as dismissed.
+  closeModal(null);
+  modalDismissable = opts.dismissable !== false;
+  modalRestoreFocus = document.activeElement as HTMLElement | null;
+  el.modalTitle.textContent = opts.title;
+  el.modalClose.hidden = !modalDismissable;
+  el.modalPanel.classList.toggle("modal-panel-wide", opts.wide === true);
+  opts.build(el.modalBody);
+
+  let navGroup: HTMLElement | null = null;
+  for (const action of opts.actions) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `btn btn-${action.kind ?? "secondary"}`;
+    btn.dataset.action = action.id;
+    btn.textContent = action.label;
+    btn.addEventListener("click", () => closeModal(action.id));
+    if (action.nav) {
+      if (!navGroup) {
+        navGroup = document.createElement("div");
+        navGroup.className = "modal-nav";
+        el.modalActions.appendChild(navGroup);
+      }
+      navGroup.appendChild(btn);
+    } else {
+      el.modalActions.appendChild(btn);
+    }
+  }
+
+  el.modalOverlay.hidden = false;
+  (opts.focus?.() ?? modalFocusables()[0] ?? el.modalPanel).focus();
+
+  modalKeyHandler = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      if (modalDismissable) {
+        event.preventDefault();
+        closeModal(null);
+      }
+      return;
+    }
+    if (event.key === "Tab") {
+      const nodes = modalFocusables();
+      if (nodes.length === 0) return;
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+      if (event.shiftKey && (active === first || !el.modalPanel.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+      return;
+    }
+    opts.onKey?.(event, closeModal);
+  };
+  document.addEventListener("keydown", modalKeyHandler, true);
+
+  return new Promise((resolve) => {
+    modalResolve = resolve;
+  });
+}
+
+el.modalClose.addEventListener("click", () => {
+  if (modalDismissable) closeModal(null);
+});
+
+el.modalOverlay.addEventListener("mousedown", (event) => {
+  if (event.target === el.modalOverlay && modalDismissable) closeModal(null);
+});
+
+type DetailRow = [label: string, value: string, mono?: boolean];
+
+function buildDetailList(rows: DetailRow[]): HTMLElement {
+  const list = document.createElement("div");
+  list.className = "detail-list";
+  for (const [label, value, mono] of rows) {
+    const row = document.createElement("div");
+    row.className = "detail-row";
+    const labelEl = document.createElement("span");
+    labelEl.className = "detail-label";
+    labelEl.textContent = label;
+    const valueEl = document.createElement("span");
+    valueEl.className = mono ? "detail-value mono" : "detail-value";
+    valueEl.textContent = value;
+    row.append(labelEl, valueEl);
+    list.appendChild(row);
+  }
+  return list;
+}
+
+function appendParagraph(host: HTMLElement, text: string, className: string) {
+  const p = document.createElement("p");
+  p.className = className;
+  p.textContent = text;
+  host.appendChild(p);
+}
+
+async function openConfirm(opts: {
+  title: string;
+  message: string;
+  rows?: DetailRow[];
+  detail?: string;
+  confirmLabel?: string;
+  danger?: boolean;
+}): Promise<boolean> {
+  const result = await openModal({
+    title: opts.title,
+    build: (body) => {
+      appendParagraph(body, opts.message, "lede");
+      if (opts.rows?.length) body.appendChild(buildDetailList(opts.rows));
+      if (opts.detail) appendParagraph(body, opts.detail, "hint");
+    },
+    actions: [
+      { id: "cancel", label: "Cancel", kind: "ghost" },
+      {
+        id: "confirm",
+        label: opts.confirmLabel ?? "Confirm",
+        kind: opts.danger ? "danger" : "primary",
+      },
+    ],
+    focus: () => el.modalActions.querySelector<HTMLElement>('[data-action="confirm"]'),
+  });
+  return result === "confirm";
+}
+
+async function showResult(opts: {
+  title: string;
+  message: string;
+  rows: DetailRow[];
+  copy?: { value: string; label: string; toast: string };
+}) {
+  const actions: ModalAction[] = [];
+  if (opts.copy) actions.push({ id: "copy", label: opts.copy.label, kind: "secondary" });
+  actions.push({ id: "done", label: "Done", kind: "primary" });
+  const result = await openModal({
+    title: opts.title,
+    wide: true,
+    build: (body) => {
+      appendParagraph(body, opts.message, "lede");
+      body.appendChild(buildDetailList(opts.rows));
+    },
+    actions,
+    focus: () => el.modalActions.querySelector<HTMLElement>('[data-action="done"]'),
+  });
+  if (result === "copy" && opts.copy) await copyText(opts.copy.value, opts.copy.toast);
+}
+
+/**
+ * Re-authenticate before a destructive action. `unlock_wallet` re-decrypts the
+ * stored blob, so a wrong passphrase fails before any lock is taken and the
+ * unlocked session is left untouched.
+ */
+async function requirePassphrase(reason: string): Promise<boolean> {
+  try {
+    // A wallet still stored in plaintext has nothing to verify against.
+    if (await invoke<boolean>("wallet_needs_migration")) return true;
+  } catch {
+    /* fall through and ask anyway */
+  }
+
+  let errorText: string | null = null;
+  for (;;) {
+    let value = "";
+    let input: HTMLInputElement | null = null;
+    const result = await openModal({
+      title: "Confirm your passphrase",
+      build: (body) => {
+        appendParagraph(body, reason, "lede");
+        const label = document.createElement("label");
+        label.className = "field";
+        const caption = document.createElement("span");
+        caption.className = "field-label";
+        caption.textContent = "Passphrase";
+        input = document.createElement("input");
+        input.type = "password";
+        input.autocomplete = "current-password";
+        input.addEventListener("input", () => {
+          value = input!.value;
+        });
+        input.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            closeModal("submit");
+          }
+        });
+        label.append(caption, input);
+        body.appendChild(label);
+        if (errorText) appendParagraph(body, errorText, "modal-error");
+      },
+      actions: [
+        { id: "cancel", label: "Cancel", kind: "ghost" },
+        { id: "submit", label: "Continue", kind: "primary" },
+      ],
+      focus: () => input,
+    });
+
+    if (result !== "submit") return false;
+    if (!value) {
+      errorText = "Enter your passphrase.";
+      continue;
+    }
+    showLoading("Verifying passphrase…");
+    try {
+      await invoke("unlock_wallet", { req: { passphrase: value } });
+      return true;
+    } catch {
+      errorText = "That passphrase is not correct.";
+    } finally {
+      hideLoading();
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Loading overlay
+   --------------------------------------------------------------------------- */
+
+let loadingDepth = 0;
+
+function showLoading(label: string) {
+  loadingDepth += 1;
+  el.loadingLabel.textContent = label;
+  el.loadingOverlay.hidden = false;
+}
+
+function setLoadingLabel(label: string) {
+  if (loadingDepth > 0) el.loadingLabel.textContent = label;
+}
+
+function hideLoading() {
+  loadingDepth = Math.max(0, loadingDepth - 1);
+  if (loadingDepth === 0) el.loadingOverlay.hidden = true;
+}
+
+async function copyText(text: string, okMessage: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus(okMessage, "success");
+  } catch {
+    setStatus("Copy failed — select the text and copy manually.", "error");
+  }
 }
 
 const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -428,8 +816,10 @@ function setMwebVisible(visible: boolean) {
   el.mwebStatusCard.hidden = !visible;
   el.mwebActions.hidden = !visible;
   el.mwebReceive.hidden = !visible;
-  views.private.nav.hidden = !visible;
-  if (!visible && currentView === "private") setView("balance");
+  cards.private.nav.hidden = !visible;
+  cards.private.pill.hidden = !visible;
+  if (!visible && activeCard === "private") setCard(null);
+  if (!visible && lastCard === "private") lastCard = "send";
 }
 
 function paymentUri(address: string): string {
@@ -550,49 +940,152 @@ function formatTxTime(timestamp: number | null): string {
   });
 }
 
+function formatTxTimeLong(timestamp: number | null): string {
+  if (timestamp == null) return "unknown";
+  const date = new Date(timestamp > 1e12 ? timestamp : timestamp * 1_000);
+  return Number.isNaN(date.getTime()) ? "unknown" : date.toLocaleString();
+}
+
+function txDirection(tx: TxRecord): "in" | "out" {
+  return tx.net_sats >= 0 ? "in" : "out";
+}
+
+function formatSignedLtc(tx: TxRecord): string {
+  return `${txDirection(tx) === "in" ? "+" : "−"}${formatLtc(Math.abs(tx.net_sats))}`;
+}
+
+function buildTxRow(tx: TxRecord, index: number): HTMLLIElement {
+  const dir = txDirection(tx);
+
+  const icon = document.createElement("span");
+  icon.className = `tx-icon ${dir}`;
+  icon.innerHTML = dir === "in" ? SVG_ARROW_IN : SVG_ARROW_OUT;
+
+  const amount = document.createElement("span");
+  amount.className = dir === "in" ? "tx-amt in" : "tx-amt";
+  amount.textContent = formatSignedLtc(tx);
+
+  const meta = document.createElement("span");
+  meta.className = "tx-meta";
+  meta.textContent = [TX_KIND_LABELS[tx.kind], formatTxTime(tx.timestamp)]
+    .filter(Boolean)
+    .join(" · ");
+  meta.hidden = meta.textContent === "";
+
+  const main = document.createElement("div");
+  main.className = "tx-main";
+  main.append(amount, meta);
+
+  const pill = document.createElement("span");
+  pill.className = tx.confirmations === 0 ? "pill pending" : "pill";
+  pill.textContent =
+    tx.confirmations === 0 ? "pending" : `${tx.confirmations.toLocaleString("en-US")} conf`;
+
+  const txid = document.createElement("span");
+  txid.className = "tx-id";
+  txid.textContent = `${tx.txid.slice(0, 8)}…${tx.txid.slice(-8)}`;
+  txid.title = tx.txid;
+
+  const side = document.createElement("div");
+  side.className = "tx-side";
+  side.append(pill, txid);
+
+  const li = document.createElement("li");
+  li.className = "tx-row";
+  li.tabIndex = 0;
+  li.setAttribute("role", "button");
+  li.setAttribute("aria-label", `Transaction ${formatSignedLtc(tx)} — show details`);
+  li.append(icon, main, side);
+  li.addEventListener("click", () => void openTxDetail(index));
+  li.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      void openTxDetail(index);
+    }
+  });
+  return li;
+}
+
 function renderHistory(txs: TxRecord[]) {
-  el.txList.innerHTML = "";
+  txRecords = txs;
+  el.txList.textContent = "";
+  el.txListRecent.textContent = "";
   el.txEmpty.hidden = txs.length > 0;
-  for (const tx of txs) {
-    const dir = tx.net_sats >= 0 ? "in" : "out";
+  el.txEmptyRecent.hidden = txs.length > 0;
+  el.btnSeeAll.hidden = txs.length <= RECENT_TX_COUNT;
+  txs.forEach((tx, index) => el.txList.appendChild(buildTxRow(tx, index)));
+  txs
+    .slice(0, RECENT_TX_COUNT)
+    .forEach((tx, index) => el.txListRecent.appendChild(buildTxRow(tx, index)));
+}
 
-    const icon = document.createElement("span");
-    icon.className = `tx-icon ${dir}`;
-    icon.innerHTML = dir === "in" ? SVG_ARROW_IN : SVG_ARROW_OUT;
+/** Detail panel for one transaction; prev/next walk the cached list in place. */
+async function openTxDetail(index: number) {
+  let at = index;
+  for (;;) {
+    const tx = txRecords[at];
+    if (!tx) return;
 
-    const amount = document.createElement("span");
-    amount.className = dir === "in" ? "tx-amt in" : "tx-amt";
-    amount.textContent = `${dir === "in" ? "+" : "−"}${formatLtc(Math.abs(tx.net_sats))}`;
+    const rows: DetailRow[] = [
+      [
+        "Status",
+        tx.confirmations === 0
+          ? "Pending — not in a block yet"
+          : `${tx.confirmations.toLocaleString("en-US")} confirmations`,
+      ],
+      ["Type", TX_KIND_LABELS[tx.kind] || (txDirection(tx) === "in" ? "received" : "sent")],
+      ["Time", formatTxTimeLong(tx.timestamp)],
+    ];
+    if (tx.height != null) rows.push(["Block height", tx.height.toLocaleString("en-US")]);
+    if (tx.received_sats > 0) rows.push(["Received", formatLtc(tx.received_sats)]);
+    if (tx.sent_sats > 0) rows.push(["Sent", formatLtc(tx.sent_sats)]);
+    rows.push([
+      "Fee",
+      tx.fee_sats != null ? `${tx.fee_sats.toLocaleString("en-US")} litoshis` : "unknown",
+    ]);
+    rows.push(["Transaction ID", tx.txid, true]);
 
-    const meta = document.createElement("span");
-    meta.className = "tx-meta";
-    meta.textContent = [TX_KIND_LABELS[tx.kind], formatTxTime(tx.timestamp)]
-      .filter(Boolean)
-      .join(" · ");
-    meta.hidden = meta.textContent === "";
+    const hasPrev = at > 0;
+    const hasNext = at < txRecords.length - 1;
+    const actions: ModalAction[] = [];
+    if (hasPrev) actions.push({ id: "prev", label: "‹ Prev", kind: "ghost", nav: true });
+    if (hasNext) actions.push({ id: "next", label: "Next ›", kind: "ghost", nav: true });
+    actions.push({ id: "copy", label: "Copy ID", kind: "secondary" });
+    actions.push({ id: "close", label: "Close", kind: "primary" });
 
-    const main = document.createElement("div");
-    main.className = "tx-main";
-    main.append(amount, meta);
+    const dir = txDirection(tx);
+    const result = await openModal({
+      title: `Transaction ${at + 1} of ${txRecords.length}`,
+      wide: true,
+      build: (body) => {
+        const amount = document.createElement("p");
+        amount.className = dir === "in" ? "detail-amount in" : "detail-amount";
+        amount.textContent = formatSignedLtc(tx);
+        body.append(amount, buildDetailList(rows));
+      },
+      actions,
+      focus: () => el.modalActions.querySelector<HTMLElement>('[data-action="close"]'),
+      onKey: (event, close) => {
+        if (event.key === "ArrowLeft" && hasPrev) {
+          event.preventDefault();
+          close("prev");
+        } else if (event.key === "ArrowRight" && hasNext) {
+          event.preventDefault();
+          close("next");
+        }
+      },
+    });
 
-    const pill = document.createElement("span");
-    pill.className = tx.confirmations === 0 ? "pill pending" : "pill";
-    pill.textContent =
-      tx.confirmations === 0 ? "pending" : `${tx.confirmations.toLocaleString("en-US")} conf`;
-
-    const txid = document.createElement("span");
-    txid.className = "tx-id";
-    txid.textContent = `${tx.txid.slice(0, 8)}…${tx.txid.slice(-8)}`;
-    txid.title = tx.txid;
-
-    const side = document.createElement("div");
-    side.className = "tx-side";
-    side.append(pill, txid);
-
-    const li = document.createElement("li");
-    li.className = "tx-row";
-    li.append(icon, main, side);
-    el.txList.appendChild(li);
+    if (result === "prev") {
+      at -= 1;
+      continue;
+    }
+    if (result === "next") {
+      at += 1;
+      continue;
+    }
+    if (result === "copy") await copyText(tx.txid, "Transaction ID copied.");
+    return;
   }
 }
 
@@ -639,11 +1132,14 @@ function renderMwebProgress(p: MwebSyncProgress) {
     return;
   }
   const pct = Math.min(100, Math.round((p.fetched / p.total) * 100));
-  el.mwebProgress.hidden = false;
-  el.mwebProgressFill.style.width = `${pct}%`;
-  el.mwebProgressText.textContent = `Downloading MWEB outputs: ${p.fetched.toLocaleString(
+  const text = `Downloading MWEB outputs: ${p.fetched.toLocaleString(
     "en-US",
   )} / ${p.total.toLocaleString("en-US")} (${pct}%)`;
+  el.mwebProgress.hidden = false;
+  el.mwebProgressFill.style.width = `${pct}%`;
+  el.mwebProgressText.textContent = text;
+  // The loading overlay covers the bar during a resync, so mirror it there.
+  setLoadingLabel(text);
 }
 
 function startMwebProgressPolling() {
@@ -727,11 +1223,29 @@ async function enterReady() {
 }
 
 async function wipeAndOnboard() {
+  // No passphrase gate here: this button exists precisely for people who can no
+  // longer unlock, so requiring the passphrase would block the only way out.
+  const confirmed = await openConfirm({
+    title: "Reset wallet data?",
+    message:
+      "This deletes the local wallet, its encrypted mnemonic and all cached chain data from this machine.",
+    detail:
+      "Funds are only recoverable afterwards with your recovery phrase. Without that backup they are gone for good.",
+    confirmLabel: "Delete wallet data",
+    danger: true,
+  });
+  if (!confirmed) return;
+
   setError(null);
-  await invoke("wipe_wallet");
+  showLoading("Resetting wallet data…");
+  try {
+    await invoke("wipe_wallet");
+  } finally {
+    hideLoading();
+  }
   lastTxid = null;
   renderLastTxid();
-  el.txList.innerHTML = "";
+  renderHistory([]);
   setPhase("onboarding");
   setStatus("Wallet data reset — create or restore a wallet.");
 }
@@ -869,6 +1383,7 @@ el.btnRestore.addEventListener("click", async () => {
   syncing = true;
   setError(null);
   updateBusyUi();
+  showLoading("Restoring wallet and scanning for coins…");
   try {
     const passphrase = el.restorePassphrase.value;
     const aezeedPass = el.restoreAezeedPass.value;
@@ -896,6 +1411,8 @@ el.btnRestore.addEventListener("click", async () => {
     setError(String(e));
     syncing = false;
     updateBusyUi();
+  } finally {
+    hideLoading();
   }
 });
 
@@ -956,14 +1473,19 @@ el.btnCopyMweb.addEventListener("click", async () => {
 
 el.btnResyncMweb.addEventListener("click", async () => {
   if (syncing || sending) return;
-  const confirmed = window.confirm(
-    "Resync MWEB from scratch? This wipes local MWEB data and re-downloads the full UTXO set (may take a while).",
-  );
+  const confirmed = await openConfirm({
+    title: "Resync MWEB from scratch?",
+    message:
+      "This wipes the local MWEB coin database and re-downloads the full UTXO set from the network.",
+    detail: "Your coins are re-discovered from the chain. It can take a while on a slow connection.",
+    confirmLabel: "Resync MWEB",
+    danger: true,
+  });
   if (!confirmed) return;
   syncing = true;
   setError(null);
   updateBusyUi();
-  setStatus("Resyncing MWEB from scratch…");
+  showLoading("Resyncing MWEB from scratch…");
   startMwebProgressPolling();
   try {
     await invoke("resync_mweb");
@@ -973,6 +1495,7 @@ el.btnResyncMweb.addEventListener("click", async () => {
     setError(String(e));
   } finally {
     stopMwebProgressPolling();
+    hideLoading();
     syncing = false;
     updateBusyUi();
   }
@@ -981,15 +1504,24 @@ el.btnResyncMweb.addEventListener("click", async () => {
 el.btnApplyMwebScheme.addEventListener("click", async () => {
   if (syncing || sending) return;
   const scheme = el.settingsMwebScheme.value as MwebScheme;
-  const confirmed = window.confirm(
-    "Switch MWEB derivation scheme and rescan? This wipes local MWEB data and " +
-      "re-downloads the full UTXO set. Transparent funds are untouched.",
-  );
+  const confirmed = await openConfirm({
+    title: "Change MWEB derivation?",
+    message:
+      "Switching schemes wipes the local MWEB data and rescans the chain for coins under a different key branch.",
+    rows: [["New scheme", scheme]],
+    detail:
+      "Pick the wrong scheme and your private balance will read as empty until you switch back. Transparent funds are untouched.",
+    confirmLabel: "Change and rescan",
+    danger: true,
+  });
   if (!confirmed) return;
+  if (!(await requirePassphrase("Changing the MWEB derivation scheme rebuilds your private coin database."))) {
+    return;
+  }
   syncing = true;
   setError(null);
   updateBusyUi();
-  setStatus("Rescanning MWEB under the new derivation scheme…");
+  showLoading("Rescanning MWEB under the new derivation scheme…");
   startMwebProgressPolling();
   try {
     await invoke("set_mweb_scheme", { scheme });
@@ -999,6 +1531,7 @@ el.btnApplyMwebScheme.addEventListener("click", async () => {
     setError(String(e));
   } finally {
     stopMwebProgressPolling();
+    hideLoading();
     syncing = false;
     updateBusyUi();
   }
@@ -1039,27 +1572,59 @@ el.sendForm.addEventListener("submit", async (event) => {
     amount_sats = parsed;
   }
 
+  const amountLabel = drain ? "Entire spendable balance" : formatLtc(amount_sats);
+  const confirmed = await openConfirm({
+    title: "Review transaction",
+    message:
+      "Check the destination carefully. Once broadcast, a Litecoin transaction cannot be recalled.",
+    rows: [
+      ["To", address, true],
+      ["Amount", amountLabel],
+      ["Fee rate", `${fee_rate_sat_vb} sat/vB`],
+    ],
+    detail:
+      "The exact network fee depends on coin selection and is shown after the transaction is broadcast.",
+    confirmLabel: "Send now",
+  });
+  if (!confirmed) return;
+
   sending = true;
   setError(null);
   updateBusyUi();
+  showLoading("Broadcasting transaction…");
+  let result: SendResult;
   try {
-    const result = await invoke<SendResult>("send_ltc", {
+    result = await invoke<SendResult>("send_ltc", {
       req: { address, amount_sats, fee_rate_sat_vb, drain },
     });
-    lastTxid = result.txid;
-    renderLastTxid();
-    setStatus(`Broadcast · fee ${result.fee_sats} litoshis — syncing…`);
-    sending = false;
-    updateBusyUi();
-    const ok = await runSync({ quiet: false });
-    if (ok) {
-      setStatus(`Sent · fee ${result.fee_sats} litoshis`, "success");
-    }
   } catch (e) {
     setError(String(e));
+    return;
+  } finally {
+    hideLoading();
     sending = false;
     updateBusyUi();
   }
+
+  lastTxid = result.txid;
+  renderLastTxid();
+  el.sendAddress.value = "";
+  el.sendAmount.value = "";
+  el.sendDrain.checked = false;
+  updateBusyUi();
+
+  void runSync({ quiet: false });
+  await showResult({
+    title: "Transaction sent",
+    message: "Broadcast to the network. It stays pending until a block includes it.",
+    rows: [
+      ["To", address, true],
+      ["Amount", amountLabel],
+      ["Network fee", `${result.fee_sats.toLocaleString("en-US")} litoshis`],
+      ["Transaction ID", result.txid, true],
+    ],
+    copy: { value: result.txid, label: "Copy ID", toast: "Transaction ID copied." },
+  });
 });
 
 el.btnSaveSettings.addEventListener("click", async () => {
@@ -1094,27 +1659,49 @@ el.btnPegin.addEventListener("click", async () => {
     setError(amountError("peg-in", el.peginAmount.value));
     return;
   }
+  const confirmed = await openConfirm({
+    title: "Move funds to private",
+    message:
+      "A peg-in moves transparent funds onto the MWEB side of the chain, where balances and amounts are confidential.",
+    rows: [["Amount", formatLtc(amount_sats)]],
+    detail: "Pegged-in coins mature after 6 blocks before they can be spent privately.",
+    confirmLabel: "Move to private",
+  });
+  if (!confirmed) return;
+
   sending = true;
   setError(null);
   updateBusyUi();
+  showLoading("Broadcasting peg-in…");
+  let result: { txid: string; maturity_blocks: number };
   try {
-    const result = await invoke<{ txid: string; maturity_blocks: number }>("pegin_ltc", {
+    result = await invoke<{ txid: string; maturity_blocks: number }>("pegin_ltc", {
       req: { amount_sats },
     });
-    lastTxid = result.txid;
-    renderLastTxid();
-    setStatus(
-      `Peg-in broadcast — matures in ${result.maturity_blocks} blocks.`,
-      "success",
-    );
-    sending = false;
-    updateBusyUi();
-    await runSync({ quiet: false });
   } catch (e) {
     setError(String(e));
+    return;
+  } finally {
+    hideLoading();
     sending = false;
     updateBusyUi();
   }
+
+  lastTxid = result.txid;
+  renderLastTxid();
+  el.peginAmount.value = "";
+
+  void runSync({ quiet: false });
+  await showResult({
+    title: "Peg-in sent",
+    message: "Broadcast to the network. The funds become spendable on the MWEB side once mature.",
+    rows: [
+      ["Amount", formatLtc(amount_sats)],
+      ["Matures in", `${result.maturity_blocks} blocks`],
+      ["Transaction ID", result.txid, true],
+    ],
+    copy: { value: result.txid, label: "Copy ID", toast: "Transaction ID copied." },
+  });
 });
 
 el.btnMwebSend.addEventListener("click", async () => {
@@ -1128,23 +1715,52 @@ el.btnMwebSend.addEventListener("click", async () => {
     setError(amountError("MWEB send", el.mwebSendAmount.value));
     return;
   }
+  const confirmed = await openConfirm({
+    title: "Review private send",
+    message:
+      "Check the stealth address carefully. Once broadcast, a private transfer cannot be recalled.",
+    rows: [
+      ["To", address, true],
+      ["Amount", formatLtc(amount_sats)],
+    ],
+    detail: "The exact MWEB fee is shown after the transfer is broadcast.",
+    confirmLabel: "Send private",
+  });
+  if (!confirmed) return;
+
   sending = true;
   setError(null);
   updateBusyUi();
+  showLoading("Broadcasting private send…");
+  let result: { wtxid: string; fee_sats: number };
   try {
-    const result = await invoke<{ wtxid: string; fee_sats: number }>("mweb_send_ltc", {
+    result = await invoke<{ wtxid: string; fee_sats: number }>("mweb_send_ltc", {
       req: { address, amount_sats },
     });
-    setStatus(`MWEB sent · wtxid ${result.wtxid}`, "success");
-    sending = false;
-    updateBusyUi();
-    await refreshCombined();
-    await refreshHistory();
   } catch (e) {
     setError(String(e));
+    return;
+  } finally {
+    hideLoading();
     sending = false;
     updateBusyUi();
   }
+
+  el.mwebSendAddress.value = "";
+  el.mwebSendAmount.value = "";
+  await refreshCombined();
+  await refreshHistory();
+  await showResult({
+    title: "Private send sent",
+    message: "Broadcast over the MWEB network. It stays pending until a block includes it.",
+    rows: [
+      ["To", address, true],
+      ["Amount", formatLtc(amount_sats)],
+      ["Network fee", `${result.fee_sats.toLocaleString("en-US")} litoshis`],
+      ["Kernel ID", result.wtxid, true],
+    ],
+    copy: { value: result.wtxid, label: "Copy ID", toast: "Kernel ID copied." },
+  });
 });
 
 el.btnPegout.addEventListener("click", async () => {
@@ -1162,22 +1778,48 @@ el.btnPegout.addEventListener("click", async () => {
     setError(`Peg-out amount must be ≥ ${DUST_LITOSHIS} litoshis.`);
     return;
   }
+  const confirmed = await openConfirm({
+    title: "Review peg-out",
+    message:
+      "A peg-out returns private funds to a transparent address, where the amount becomes publicly visible.",
+    rows: [
+      ["To", address, true],
+      ["Amount", formatLtc(amount_sats)],
+    ],
+    confirmLabel: "Peg out now",
+  });
+  if (!confirmed) return;
+
   sending = true;
   setError(null);
   updateBusyUi();
+  showLoading("Broadcasting peg-out…");
+  let result: { wtxid: string };
   try {
-    const result = await invoke<{ wtxid: string }>("pegout_ltc", {
-      req: { address, amount_sats },
-    });
-    setStatus(`Peg-out broadcast · wtxid ${result.wtxid}`, "success");
-    sending = false;
-    updateBusyUi();
-    await runSync({ quiet: false });
+    result = await invoke<{ wtxid: string }>("pegout_ltc", { req: { address, amount_sats } });
   } catch (e) {
     setError(String(e));
+    return;
+  } finally {
+    hideLoading();
     sending = false;
     updateBusyUi();
   }
+
+  el.pegoutAddress.value = "";
+  el.pegoutAmount.value = "";
+
+  void runSync({ quiet: false });
+  await showResult({
+    title: "Peg-out sent",
+    message: "Broadcast to the network. The transparent funds arrive once the peg-out confirms.",
+    rows: [
+      ["To", address, true],
+      ["Amount", formatLtc(amount_sats)],
+      ["Kernel ID", result.wtxid, true],
+    ],
+    copy: { value: result.wtxid, label: "Copy ID", toast: "Kernel ID copied." },
+  });
 });
 
 void boot();

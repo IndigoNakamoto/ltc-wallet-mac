@@ -8,6 +8,8 @@ node_modules/
 dist/
 ui/dist/
 .ui-dist/
+# Scratch harness for browser-only UI screenshots
+ui/.preview/
 
 # Tauri
 src-tauri/target
