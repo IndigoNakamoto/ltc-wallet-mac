@@ -3,6 +3,16 @@
 # or by pushing to the `release` branch.
 #
 # Sibling path deps are checked out next to this repo using SHAs in deps/pins.env.
+# All third-party actions are pinned to commit SHAs.
+#
+# Apple signing + notarization are drop-in: when the APPLE_CERTIFICATE /
+# APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY / APPLE_ID /
+# APPLE_PASSWORD / APPLE_TEAM_ID repository secrets exist, the macOS build is
+# signed and notarized automatically; without them it stays unsigned. No
+# workflow edits are needed when credentials arrive.
+#
+# Each platform job also attaches a SHA256SUMS-<platform>.txt so users can
+# verify downloaded artifacts (see docs/VERIFYING.md).
 name: Release
 
 on:
@@ -21,15 +31,17 @@ jobs:
       matrix:
         include:
           - platform: macos-latest
+            sums_suffix: macos-aarch64
             args: ""
           - platform: ubuntu-22.04
+            sums_suffix: linux-x86_64
             args: ""
 
     runs-on: ${{ matrix.platform }}
 
     steps:
       - name: Checkout wallet
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: ltc-wallet-mac
 
@@ -48,21 +60,21 @@ jobs:
           echo "rust_litecoin_ref=$RUST_LITECOIN_REF" >> "$GITHUB_OUTPUT"
 
       - name: Checkout bdk sibling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ${{ steps.pins.outputs.bdk_repo }}
           ref: ${{ steps.pins.outputs.bdk_ref }}
           path: bdk
 
       - name: Checkout bdk_wallet into bdk
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ${{ steps.pins.outputs.bdk_wallet_repo }}
           ref: ${{ steps.pins.outputs.bdk_wallet_ref }}
           path: bdk/bdk_wallet
 
       - name: Checkout rust-litecoin sibling
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ${{ steps.pins.outputs.rust_litecoin_repo }}
           ref: ${{ steps.pins.outputs.rust_litecoin_ref }}
@@ -80,19 +92,19 @@ jobs:
             xdg-utils
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: lts/*
           cache: npm
           cache-dependency-path: ltc-wallet-mac/package-lock.json
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch snapshot
         with:
           toolchain: "1.97.1"
 
       - name: Rust cache
-        uses: swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: ltc-wallet-mac -> target
 
@@ -100,8 +112,47 @@ jobs:
         working-directory: ltc-wallet-mac
         run: npm ci
 
-      - name: Build and upload release assets
-        uses: tauri-apps/tauri-action@v0
+      # Signed variant: runs only when Apple credentials are configured.
+      # Kept as a separate step (rather than conditional env values) because
+      # the Tauri bundler treats an empty APPLE_CERTIFICATE as "try to sign".
+      - name: Build and upload release assets (signed macOS)
+        id: build_signed
+        if: matrix.platform == 'macos-latest' && secrets.APPLE_CERTIFICATE != ''
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          projectPath: ltc-wallet-mac
+          tagName: v__VERSION__
+          releaseName: "LTC Wallet v__VERSION__"
+          releaseBody: |
+            Draft release built by GitHub Actions.
+
+            **Install**
+            - macOS: open the `.dmg` and drag the app to Applications.
+            - Linux: prefer the `.AppImage` (`chmod +x` then run), or install the `.deb`.
+
+            **Verify your download** — see [`docs/VERIFYING.md`](https://github.com/${{ github.repository }}/blob/main/docs/VERIFYING.md).
+            Each platform attaches a `SHA256SUMS-<platform>.txt` with checksums of its artifacts.
+
+            **Sibling pins** (must match `deps/pins.env` at the release tag)
+            - bdk: `${{ steps.pins.outputs.bdk_ref }}`
+            - bdk_wallet: `${{ steps.pins.outputs.bdk_wallet_ref }}`
+            - rust-litecoin: `${{ steps.pins.outputs.rust_litecoin_ref }}`
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: Build and upload release assets (unsigned)
+        id: build_unsigned
+        if: matrix.platform != 'macos-latest' || secrets.APPLE_CERTIFICATE == ''
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -112,15 +163,47 @@ jobs:
             Draft release built by GitHub Actions.
 
             **Install**
-            - macOS: open the `.dmg` and drag the app to Applications. Builds are unsigned, so
+            - macOS: open the `.dmg` and drag the app to Applications. These builds are unsigned, so
               macOS claims the app "is damaged" — it isn't. Clear the quarantine flag once with
               `xattr -cr "/Applications/LTC Wallet.app"`, then launch normally.
             - Linux: prefer the `.AppImage` (`chmod +x` then run), or install the `.deb`.
 
-            **Sibling pins** (see `deps/pins.env`)
+            **Verify your download** — see [`docs/VERIFYING.md`](https://github.com/${{ github.repository }}/blob/main/docs/VERIFYING.md).
+            Each platform attaches a `SHA256SUMS-<platform>.txt` with checksums of its artifacts.
+
+            **Sibling pins** (must match `deps/pins.env` at the release tag)
             - bdk: `${{ steps.pins.outputs.bdk_ref }}`
             - bdk_wallet: `${{ steps.pins.outputs.bdk_wallet_ref }}`
             - rust-litecoin: `${{ steps.pins.outputs.rust_litecoin_ref }}`
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Generate and upload SHA256SUMS
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_PATHS: ${{ steps.build_signed.outputs.artifactPaths || steps.build_unsigned.outputs.artifactPaths }}
+          RELEASE_ID: ${{ steps.build_signed.outputs.releaseId || steps.build_unsigned.outputs.releaseId }}
+          SUMS_FILE: SHA256SUMS-${{ matrix.sums_suffix }}.txt
+        run: |
+          set -euo pipefail
+          : > "$SUMS_FILE"
+          while IFS= read -r artifact; do
+            # .app bundles are directories; only hash real files (.dmg/.deb/.AppImage).
+            [ -f "$artifact" ] || continue
+            if command -v sha256sum >/dev/null 2>&1; then
+              (cd "$(dirname "$artifact")" && sha256sum "$(basename "$artifact")") >> "$SUMS_FILE"
+            else
+              (cd "$(dirname "$artifact")" && shasum -a 256 "$(basename "$artifact")") >> "$SUMS_FILE"
+            fi
+          done < <(printf '%s' "$ARTIFACT_PATHS" | jq -r '.[]')
+          echo "Checksums:"
+          cat "$SUMS_FILE"
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Content-Type: text/plain" \
+            --data-binary "@$SUMS_FILE" \
+            "https://uploads.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID/assets?name=$SUMS_FILE" \
+            > /dev/null
+          echo "Uploaded $SUMS_FILE to release $RELEASE_ID"

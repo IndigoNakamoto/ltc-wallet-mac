@@ -1,0 +1,175 @@
+# Build, test, lint, and supply-chain checks on every PR and push to main.
+#
+# Sibling path deps are checked out next to this repo using SHAs in deps/pins.env,
+# mirroring release.yml. All third-party actions are pinned to commit SHAs.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust build, clippy, tests
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout wallet
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: ltc-wallet-mac
+
+      - name: Load sibling pins
+        id: pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source ltc-wallet-mac/deps/pins.env
+          echo "bdk_repo=$BDK_REPO" >> "$GITHUB_OUTPUT"
+          echo "bdk_ref=$BDK_REF" >> "$GITHUB_OUTPUT"
+          echo "bdk_wallet_repo=$BDK_WALLET_REPO" >> "$GITHUB_OUTPUT"
+          echo "bdk_wallet_ref=$BDK_WALLET_REF" >> "$GITHUB_OUTPUT"
+          echo "rust_litecoin_repo=$RUST_LITECOIN_REPO" >> "$GITHUB_OUTPUT"
+          echo "rust_litecoin_ref=$RUST_LITECOIN_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout bdk sibling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ steps.pins.outputs.bdk_repo }}
+          ref: ${{ steps.pins.outputs.bdk_ref }}
+          path: bdk
+
+      - name: Checkout bdk_wallet into bdk
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ steps.pins.outputs.bdk_wallet_repo }}
+          ref: ${{ steps.pins.outputs.bdk_wallet_ref }}
+          path: bdk/bdk_wallet
+
+      - name: Checkout rust-litecoin sibling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ steps.pins.outputs.rust_litecoin_repo }}
+          ref: ${{ steps.pins.outputs.rust_litecoin_ref }}
+          path: rust-litecoin
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch snapshot
+        with:
+          toolchain: "1.97.1"
+          components: clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: ltc-wallet-mac -> target
+
+      - name: Check lockfile is up to date
+        working-directory: ltc-wallet-mac
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
+      - name: Clippy
+        working-directory: ltc-wallet-mac
+        run: cargo clippy --workspace --all-targets --locked
+
+      - name: Tests
+        working-directory: ltc-wallet-mac
+        run: cargo test --workspace --locked
+
+  supply-chain:
+    name: cargo audit + cargo deny
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout wallet
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: ltc-wallet-mac
+
+      - name: Load sibling pins
+        id: pins
+        shell: bash
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source ltc-wallet-mac/deps/pins.env
+          echo "bdk_repo=$BDK_REPO" >> "$GITHUB_OUTPUT"
+          echo "bdk_ref=$BDK_REF" >> "$GITHUB_OUTPUT"
+          echo "bdk_wallet_repo=$BDK_WALLET_REPO" >> "$GITHUB_OUTPUT"
+          echo "bdk_wallet_ref=$BDK_WALLET_REF" >> "$GITHUB_OUTPUT"
+          echo "rust_litecoin_repo=$RUST_LITECOIN_REPO" >> "$GITHUB_OUTPUT"
+          echo "rust_litecoin_ref=$RUST_LITECOIN_REF" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout bdk sibling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ steps.pins.outputs.bdk_repo }}
+          ref: ${{ steps.pins.outputs.bdk_ref }}
+          path: bdk
+
+      - name: Checkout bdk_wallet into bdk
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ steps.pins.outputs.bdk_wallet_repo }}
+          ref: ${{ steps.pins.outputs.bdk_wallet_ref }}
+          path: bdk/bdk_wallet
+
+      - name: Checkout rust-litecoin sibling
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: ${{ steps.pins.outputs.rust_litecoin_repo }}
+          ref: ${{ steps.pins.outputs.rust_litecoin_ref }}
+          path: rust-litecoin
+
+      - name: Install cargo-audit and cargo-deny
+        uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2.85.6
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: cargo audit
+        working-directory: ltc-wallet-mac
+        run: cargo audit
+
+      - name: cargo deny
+        working-directory: ltc-wallet-mac
+        run: cargo deny check advisories bans licenses sources
+
+  frontend:
+    name: Frontend build + npm audit
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout wallet
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: npm audit
+        run: npm audit --audit-level=high
+
+      - name: Type-check and build UI
+        run: npm run build

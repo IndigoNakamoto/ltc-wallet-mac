@@ -1,0 +1,56 @@
+# cargo-deny configuration — run with `cargo deny check advisories bans licenses sources`.
+# CI runs this in .github/workflows/ci.yml.
+
+[graph]
+all-features = false
+
+[advisories]
+# Fail on actual vulnerabilities and yanked crates. Unmaintained advisories
+# only fail for direct workspace dependencies: the Tauri/GTK3 stack pulls in
+# several unmaintained transitive crates we cannot replace (they are still
+# surfaced as warnings by `cargo audit` in the same CI job).
+yanked = "deny"
+unmaintained = "workspace"
+ignore = []
+
+[licenses]
+# Permissive licenses only. Anything new that doesn't match fails CI so it
+# gets reviewed deliberately.
+allow = [
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "MIT",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "CC0-1.0",
+  "Zlib",
+  "BSL-1.0",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "Unicode-DFS-2016",
+  "CDLA-Permissive-2.0",
+  "OpenSSL",
+  # MIT +no-false-attribs, used by hex_lit (via the litecoin crate).
+  "MITNFA",
+]
+confidence-threshold = 0.8
+
+[[licenses.clarify]]
+crate = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[bans]
+# Duplicate crate versions are common in the GTK/Tauri stack; warn, don't fail.
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# Litecoin forks used by the sibling BDK trees (pinned by rev in Cargo.lock).
+allow-git = [
+  "https://github.com/IndigoNakamoto/rust-electrum-client",
+  "https://github.com/IndigoNakamoto/rust-miniscript",
+]

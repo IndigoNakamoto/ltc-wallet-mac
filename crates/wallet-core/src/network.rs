@@ -24,13 +24,22 @@ impl WalletNetwork {
     ///
     /// Public community servers come and go; connection code should try these in order
     /// rather than depending on any single one.
+    ///
+    /// The cipig.net mainnet servers present CA-signed certificates and work with
+    /// TLS certificate validation enabled (the default). The remaining community
+    /// servers use self-signed certificates and are only reachable when the user
+    /// disables validation in Settings.
     pub fn default_electrum_urls(self) -> &'static [&'static str] {
         match self {
             Self::Mainnet => &[
+                "ssl://electrum1.cipig.net:20063",
+                "ssl://electrum2.cipig.net:20063",
                 "ssl://backup.electrum-ltc.org:443",
                 "ssl://electrum.ltc.xurious.com:50002",
                 "ssl://electrum-ltc.bysh.me:50002",
             ],
+            // No known testnet server presents a CA-signed certificate; testnet
+            // use generally requires disabling TLS validation in Settings.
             Self::Testnet => &[
                 "ssl://electrum.ltc.xurious.com:51002",
                 "ssl://electrum-ltc.bysh.me:51002",

@@ -258,11 +258,22 @@ async fn update_settings(
         .map_err(|e| e.to_string())?
 }
 
+/// Phrase the user must type before a wipe is executed. Checked here at the
+/// IPC boundary (not only in the UI) so a scripted or compromised webview
+/// cannot destroy the wallet with a bare `invoke("wipe_wallet")`.
+const WIPE_CONFIRMATION_PHRASE: &str = "DELETE WALLET";
+
 #[tauri::command]
 async fn wipe_wallet(
     app: AppHandle,
     state: State<'_, Arc<WalletApp>>,
+    confirmation: String,
 ) -> Result<(), String> {
+    if confirmation.trim() != WIPE_CONFIRMATION_PHRASE {
+        return Err(format!(
+            "wipe refused: type {WIPE_CONFIRMATION_PHRASE} to confirm deleting all wallet data"
+        ));
+    }
     let dir = data_dir(&app)?;
     let wallet = Arc::clone(&state);
     tauri::async_runtime::spawn_blocking(move || wallet.wipe(&dir).map_err(map_err))

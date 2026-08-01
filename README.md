@@ -10,6 +10,9 @@ Native Litecoin wallet for macOS and Linux, built on the Litecoin BDK fork ([`In
 
 Read [`docs/CHAT_HANDOFF.md`](docs/CHAT_HANDOFF.md). Blueprint: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
+Security: threat model and disclosure policy in [`SECURITY.md`](SECURITY.md);
+how to verify a release in [`docs/VERIFYING.md`](docs/VERIFYING.md).
+
 ## Expected sibling checkouts
 
 ```text
@@ -79,9 +82,14 @@ Signed + notarized release (Apple Developer Program):
 export APPLE_ID='you@example.com'
 export APPLE_PASSWORD='app-specific-password'
 export APPLE_TEAM_ID='XXXXXXXXXX'
-# Set bundle.macOS.signingIdentity in tauri.conf.json to your "Developer ID Application: …"
+export APPLE_SIGNING_IDENTITY='Developer ID Application: …'
 npm run tauri build
 ```
+
+CI signing is drop-in: add `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
+`APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID` as
+repository secrets and the release workflow signs + notarizes automatically —
+no workflow edits needed.
 
 Hardened runtime + network client entitlement are enabled via [`src-tauri/Entitlements.plist`](src-tauri/Entitlements.plist). Universal (x86_64 + arm64) builds are deferred until sibling deps cross-compile cleanly.
 
@@ -107,7 +115,8 @@ Share the `.AppImage` (`chmod +x LTC\ Wallet_*.AppImage && ./LTC\ Wallet_*.AppIm
 2. Push to the `release` branch, or run **Actions → Release → Run workflow**.
 3. Open the draft release, edit notes, publish.
 
-Recipients download from the release assets page — no need to compile.
+Each platform job attaches a `SHA256SUMS-<platform>.txt`; recipients can check
+their download against it (see [`docs/VERIFYING.md`](docs/VERIFYING.md)).
 
 ## Next step
 

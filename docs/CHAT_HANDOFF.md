@@ -28,7 +28,7 @@ Paste or `@`-reference this file when starting a new Cursor chat in this repo.
 | mainnet | `ssl://electrum-ltc.bysh.me:50002` |
 | testnet | `ssl://electrum-ltc.bysh.me:51002` |
 
-MWEB peers default to `127.0.0.1:9333` (user-configurable). Public Electrum servers often need `validate_domain(false)`.
+MWEB peers default to `127.0.0.1:9333` (user-configurable). Electrum TLS certificate validation is on by default (cipig.net defaults have CA certs); the self-signed community servers need the Settings toggle off.
 
 ## `wallet-core` surface
 

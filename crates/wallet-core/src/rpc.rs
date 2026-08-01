@@ -40,7 +40,8 @@ pub fn send_raw_transaction(rpc_url: &str, tx_hex: &str) -> Result<String, Walle
                 return Err(WalletError::Rpc(format!("http status {code}{hint}")));
             }
         },
-        Err(e) => return Err(WalletError::Rpc(e.to_string())),
+        // ureq errors embed the request URL, which may carry user:pass userinfo.
+        Err(e) => return Err(WalletError::Rpc(redact_userinfo(&e.to_string()))),
     };
     if let Some(err) = value.get("error").filter(|e| !e.is_null()) {
         let msg = err
@@ -68,6 +69,30 @@ pub fn normalize_rpc_url(url: &str) -> String {
     }
 }
 
+/// Strip `user:pass@` userinfo from any URL embedded in `msg` so RPC
+/// credentials never reach logs or UI error text.
+fn redact_userinfo(msg: &str) -> String {
+    let mut out = String::with_capacity(msg.len());
+    let mut rest = msg;
+    while let Some(idx) = rest.find("://") {
+        let (head, tail) = rest.split_at(idx + 3);
+        out.push_str(head);
+        let authority_end = tail
+            .find(['/', '?', '#', ' ', ')', '"'])
+            .unwrap_or(tail.len());
+        let authority = &tail[..authority_end];
+        if let Some(at) = authority.rfind('@') {
+            out.push_str("[redacted]@");
+            out.push_str(&authority[at + 1..]);
+        } else {
+            out.push_str(authority);
+        }
+        rest = &tail[authority_end..];
+    }
+    out.push_str(rest);
+    out
+}
+
 /// True when the URL authority contains userinfo (`scheme://user:pass@host`).
 fn url_has_credentials(url: &str) -> bool {
     let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
@@ -89,6 +114,19 @@ mod tests {
             "https://user:pass@host:9332"
         );
         assert_eq!(normalize_rpc_url(""), "");
+    }
+
+    #[test]
+    fn redacts_userinfo_in_error_text() {
+        assert_eq!(
+            redact_userinfo("http://user:secret@127.0.0.1:9332/: Connection Failed"),
+            "http://[redacted]@127.0.0.1:9332/: Connection Failed"
+        );
+        assert_eq!(
+            redact_userinfo("error at https://host:9332/path"),
+            "error at https://host:9332/path"
+        );
+        assert_eq!(redact_userinfo("no url here"), "no url here");
     }
 
     #[test]

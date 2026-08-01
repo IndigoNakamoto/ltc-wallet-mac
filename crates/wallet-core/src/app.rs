@@ -32,6 +32,8 @@ struct WalletState {
     db: Connection,
     network: WalletNetwork,
     electrum_url: String,
+    /// Verify TLS certificates on ssl:// Electrum servers.
+    electrum_validate_domain: bool,
     /// Server that most recently worked this session (tried first to avoid
     /// re-paying a connect timeout on a dead configured server).
     active_electrum_url: Option<String>,
@@ -66,7 +68,7 @@ fn electrum_candidates(state: &WalletState) -> Vec<String> {
 /// Connect with fallback across [`electrum_candidates`], remembering what worked.
 fn connect_electrum(state: &mut WalletState) -> Result<crate::electrum::ElectrumClient, WalletError> {
     let candidates = electrum_candidates(state);
-    let (client, used) = electrum::connect_first(&candidates)?;
+    let (client, used) = electrum::connect_first(&candidates, state.electrum_validate_domain)?;
     if used != state.electrum_url {
         eprintln!("electrum: configured server unavailable; using fallback {used}");
     }
@@ -232,6 +234,7 @@ impl WalletApp {
             db,
             network: meta.network,
             electrum_url: meta.electrum_url,
+            electrum_validate_domain: meta.electrum_validate_domain,
             active_electrum_url: None,
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
@@ -355,6 +358,7 @@ impl WalletApp {
         let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
         Ok(WalletSettings {
             electrum_url: state.electrum_url.clone(),
+            electrum_validate_domain: state.electrum_validate_domain,
             litecoin_rpc_url: state.litecoin_rpc_url.clone(),
             mweb_peers: state.mweb_peers.clone(),
             mweb_scheme: state.mweb_scheme,
@@ -367,6 +371,7 @@ impl WalletApp {
         let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
         state.electrum_url = req.electrum_url.trim().to_string();
+        state.electrum_validate_domain = req.electrum_validate_domain;
         // New configured server should be tried first on the next connection.
         state.active_electrum_url = None;
         state.litecoin_rpc_url = req
@@ -382,6 +387,7 @@ impl WalletApp {
         let meta = WalletMeta {
             network: state.network,
             electrum_url: state.electrum_url.clone(),
+            electrum_validate_domain: state.electrum_validate_domain,
             needs_full_scan: state.needs_full_scan,
             needs_mweb_scan: state.needs_mweb_scan,
             litecoin_rpc_url: state.litecoin_rpc_url.clone(),
@@ -478,6 +484,7 @@ impl WalletApp {
         let meta = WalletMeta {
             network: state.network,
             electrum_url: state.electrum_url.clone(),
+            electrum_validate_domain: state.electrum_validate_domain,
             needs_full_scan: state.needs_full_scan,
             needs_mweb_scan: state.needs_mweb_scan,
             litecoin_rpc_url: state.litecoin_rpc_url.clone(),
@@ -526,6 +533,7 @@ impl WalletApp {
             let meta = WalletMeta {
                 network: state.network,
                 electrum_url: state.electrum_url.clone(),
+                electrum_validate_domain: state.electrum_validate_domain,
                 needs_full_scan: state.needs_full_scan,
                 needs_mweb_scan: true,
                 litecoin_rpc_url: state.litecoin_rpc_url.clone(),
@@ -753,6 +761,7 @@ impl WalletApp {
             db,
             network,
             electrum_url: meta.electrum_url,
+            electrum_validate_domain: meta.electrum_validate_domain,
             active_electrum_url: None,
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
@@ -859,6 +868,7 @@ impl MemoryBackedApp {
             db,
             network: meta.network,
             electrum_url: meta.electrum_url,
+            electrum_validate_domain: meta.electrum_validate_domain,
             active_electrum_url: None,
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
@@ -962,6 +972,7 @@ impl MemoryBackedApp {
             db,
             network,
             electrum_url: meta.electrum_url,
+            electrum_validate_domain: meta.electrum_validate_domain,
             active_electrum_url: None,
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,

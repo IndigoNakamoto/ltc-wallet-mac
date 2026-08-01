@@ -365,12 +365,19 @@ fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), WalletError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    // Create with 0600 atomically rather than chmod-after-create, so the file
+    // is never observable with default (umask) permissions.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options
         .open(path)
         .map_err(|e| WalletError::SecretStore(e.to_string()))?;
+    // mode() only applies on create; normalize pre-existing files too.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

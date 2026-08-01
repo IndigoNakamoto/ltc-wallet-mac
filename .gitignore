@@ -1,7 +1,6 @@
 # Rust
 /target
 **/target
-Cargo.lock
 
 # Node / frontend
 node_modules/
@@ -23,6 +22,9 @@ src-tauri/gen
 **/mweb.db
 **/mweb_sync.json
 .wallet-data/
+
+# Local tool installs (e.g. cargo install --root .tools)
+.tools/
 
 # OS / IDE
 .DS_Store

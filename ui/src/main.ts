@@ -69,6 +69,7 @@ type MwebScheme = "litecoin-core" | "lip0004" | "mwebd";
 
 type WalletSettings = {
   electrum_url: string;
+  electrum_validate_domain: boolean;
   litecoin_rpc_url: string | null;
   mweb_peers: string[];
   mweb_scheme: MwebScheme;
@@ -214,6 +215,7 @@ const el = {
   sendDrain: document.querySelector<HTMLInputElement>("#send-drain")!,
   sendFeeRate: document.querySelector<HTMLInputElement>("#send-fee-rate")!,
   settingsElectrum: document.querySelector<HTMLInputElement>("#settings-electrum")!,
+  settingsValidateTls: document.querySelector<HTMLInputElement>("#settings-validate-tls")!,
   settingsRpc: document.querySelector<HTMLInputElement>("#settings-rpc")!,
   settingsPeers: document.querySelector<HTMLInputElement>("#settings-peers")!,
   settingsMwebScheme: document.querySelector<HTMLSelectElement>("#settings-mweb-scheme")!,
@@ -1117,6 +1119,7 @@ async function loadSettings() {
   try {
     const s = await invoke<WalletSettings>("get_settings");
     el.settingsElectrum.value = s.electrum_url;
+    el.settingsValidateTls.checked = s.electrum_validate_domain ?? true;
     el.settingsRpc.value = s.litecoin_rpc_url ?? "";
     el.settingsPeers.value = s.mweb_peers.join(", ");
     el.settingsMwebScheme.value = s.mweb_scheme ?? "litecoin-core";
@@ -1222,24 +1225,77 @@ async function enterReady() {
   void runSync({ quiet: false });
 }
 
+/** Phrase required by the `wipe_wallet` command; enforced backend-side too. */
+const WIPE_PHRASE = "DELETE WALLET";
+
+/**
+ * Destructive-action gate: the user must type the wipe phrase. Returns the
+ * typed value (passed through IPC so the backend check is meaningful) or
+ * null when cancelled or mismatched.
+ */
+async function confirmWipePhrase(): Promise<string | null> {
+  let value = "";
+  let input: HTMLInputElement | null = null;
+  const result = await openModal({
+    title: "Reset wallet data?",
+    build: (body) => {
+      appendParagraph(
+        body,
+        "This deletes the local wallet, its encrypted mnemonic and all cached chain data from this machine.",
+        "lede",
+      );
+      appendParagraph(
+        body,
+        "Funds are only recoverable afterwards with your recovery phrase. Without that backup they are gone for good.",
+        "hint",
+      );
+      const label = document.createElement("label");
+      label.className = "field";
+      const caption = document.createElement("span");
+      caption.className = "field-label";
+      caption.textContent = `Type "${WIPE_PHRASE}" to confirm`;
+      input = document.createElement("input");
+      input.type = "text";
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      input.className = "mono";
+      input.addEventListener("input", () => {
+        value = input!.value;
+      });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          closeModal("confirm");
+        }
+      });
+      label.append(caption, input);
+      body.appendChild(label);
+    },
+    actions: [
+      { id: "cancel", label: "Cancel", kind: "ghost" },
+      { id: "confirm", label: "Delete wallet data", kind: "danger" },
+    ],
+    focus: () => input,
+  });
+  if (result !== "confirm") return null;
+  if (value.trim() !== WIPE_PHRASE) {
+    setStatus(`Wallet not reset — you must type "${WIPE_PHRASE}" exactly.`, "error");
+    return null;
+  }
+  return value;
+}
+
 async function wipeAndOnboard() {
   // No passphrase gate here: this button exists precisely for people who can no
   // longer unlock, so requiring the passphrase would block the only way out.
-  const confirmed = await openConfirm({
-    title: "Reset wallet data?",
-    message:
-      "This deletes the local wallet, its encrypted mnemonic and all cached chain data from this machine.",
-    detail:
-      "Funds are only recoverable afterwards with your recovery phrase. Without that backup they are gone for good.",
-    confirmLabel: "Delete wallet data",
-    danger: true,
-  });
-  if (!confirmed) return;
+  // The typed phrase (checked again backend-side) is the destructive-action gate.
+  const confirmation = await confirmWipePhrase();
+  if (confirmation === null) return;
 
   setError(null);
   showLoading("Resetting wallet data…");
   try {
-    await invoke("wipe_wallet");
+    await invoke("wipe_wallet", { confirmation });
   } finally {
     hideLoading();
   }
@@ -1633,6 +1689,7 @@ el.btnSaveSettings.addEventListener("click", async () => {
     await invoke("update_settings", {
       req: {
         electrum_url: el.settingsElectrum.value.trim(),
+        electrum_validate_domain: el.settingsValidateTls.checked,
         litecoin_rpc_url: el.settingsRpc.value.trim() || null,
         mweb_peers: el.settingsPeers.value
           .split(",")

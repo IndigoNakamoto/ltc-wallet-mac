@@ -618,6 +618,14 @@
                 <span class="field-label">Electrum URL</span>
                 <input id="settings-electrum" class="mono" type="text" spellcheck="false" />
               </label>
+              <label class="check">
+                <input id="settings-validate-tls" type="checkbox" />
+                <span>Verify TLS certificates (recommended)</span>
+              </label>
+              <span class="hint">
+                Protects against man-in-the-middle attacks. Some community Electrum servers
+                use self-signed certificates and only work with verification off.
+              </span>
               <label class="field">
                 <span class="field-label">Litecoin RPC URL</span>
                 <input

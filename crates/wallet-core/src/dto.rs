@@ -150,10 +150,17 @@ pub struct MigrateEncryptRequest {
     pub passphrase: String,
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// Electrum / peer settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletSettings {
     pub electrum_url: String,
+    /// Verify TLS certificates on ssl:// Electrum servers (default true).
+    #[serde(default = "default_true")]
+    pub electrum_validate_domain: bool,
     #[serde(default)]
     pub litecoin_rpc_url: Option<String>,
     #[serde(default)]
@@ -167,6 +174,9 @@ pub struct WalletSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateSettingsRequest {
     pub electrum_url: String,
+    /// Verify TLS certificates on ssl:// Electrum servers (default true).
+    #[serde(default = "default_true")]
+    pub electrum_validate_domain: bool,
     #[serde(default)]
     pub litecoin_rpc_url: Option<String>,
     #[serde(default)]

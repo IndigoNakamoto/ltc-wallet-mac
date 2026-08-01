@@ -27,6 +27,11 @@ fn default_mweb_peers() -> Vec<String> {
 pub struct WalletMeta {
     pub network: WalletNetwork,
     pub electrum_url: String,
+    /// Verify TLS certificates (CA chain + hostname) on ssl:// Electrum servers.
+    /// Defaults to true; disabling allows self-signed community servers but
+    /// removes man-in-the-middle protection.
+    #[serde(default = "default_true")]
+    pub electrum_validate_domain: bool,
     /// When true, the next sync runs a BIP84 full_scan; cleared after success.
     #[serde(default = "default_true")]
     pub needs_full_scan: bool,
@@ -51,6 +56,7 @@ impl WalletMeta {
             network,
             electrum_url: electrum_url
                 .unwrap_or_else(|| network.default_electrum_url().to_string()),
+            electrum_validate_domain: true,
             needs_full_scan: true,
             needs_mweb_scan: true,
             litecoin_rpc_url: None,
