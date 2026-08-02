@@ -68,6 +68,70 @@ jobs:
           ref: ${{ steps.pins.outputs.rust_litecoin_ref }}
           path: rust-litecoin
 
+      # bdk_wallet pins bdk and rust-litecoin for its own CI, and this repo pins
+      # all three. Where those overlap they can drift, and the failure is quiet:
+      # the tree assembled here would be one bdk_wallet's CI never compiled, so
+      # a green run there would say nothing about what actually ships.
+      #
+      # Being *ahead* is allowed, because that is what landing a bdk change
+      # looks like before bdk_wallet has caught up. Behind or diverged is not.
+      # Compared through the API so neither sibling needs a full-history clone.
+      - name: Check sibling pins agree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # shellcheck disable=SC1091
+          source ltc-wallet-mac/deps/pins.env
+          ours_bdk_repo=$BDK_REPO
+          ours_bdk_ref=$BDK_REF
+          ours_ltc_repo=$RUST_LITECOIN_REPO
+          ours_ltc_ref=$RUST_LITECOIN_REF
+
+          # Overwrites the same names with bdk_wallet's view of them.
+          # shellcheck disable=SC1091
+          source bdk/bdk_wallet/deps/pins.env
+
+          status=0
+
+          compare() {
+            local label=$1 repo=$2 theirs=$3 ours=$4 state
+            if [ "$theirs" = "$ours" ]; then
+              echo "ok: $label identical (${ours:0:8})"
+              return
+            fi
+            state=$(gh api "repos/$repo/compare/$theirs...$ours" --jq .status)
+            case "$state" in
+              ahead|identical)
+                echo "ok: $label — this repo is $state of bdk_wallet's pin"
+                ;;
+              *)
+                echo "MISMATCH: $label pins are '$state'."
+                echo "  bdk_wallet/deps/pins.env:     ${theirs:0:8}"
+                echo "  ltc-wallet-mac/deps/pins.env: ${ours:0:8}"
+                status=1
+                ;;
+            esac
+          }
+
+          if [ "$ours_bdk_repo" != "$BDK_REPO" ]; then
+            echo "MISMATCH: bdk repo differs ($ours_bdk_repo vs $BDK_REPO)"
+            status=1
+          else
+            compare bdk "$BDK_REPO" "$BDK_REF" "$ours_bdk_ref"
+          fi
+
+          if [ "$ours_ltc_repo" != "$RUST_LITECOIN_REPO" ]; then
+            echo "MISMATCH: rust-litecoin repo differs ($ours_ltc_repo vs $RUST_LITECOIN_REPO)"
+            status=1
+          else
+            compare rust-litecoin "$RUST_LITECOIN_REPO" "$RUST_LITECOIN_REF" "$ours_ltc_ref"
+          fi
+
+          exit $status
+
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
