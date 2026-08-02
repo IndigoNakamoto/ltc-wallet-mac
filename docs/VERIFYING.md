@@ -33,7 +33,7 @@ build time, cryptographically linking it to the exact commit and workflow run
 that produced it. With the [GitHub CLI](https://cli.github.com/):
 
 ```bash
-gh attestation verify "LTC Wallet_0.3.1_aarch64.dmg" --repo IndigoNakamoto/ltc-wallet-mac
+gh attestation verify "LTC Wallet_0.3.2_aarch64.dmg" --repo IndigoNakamoto/ltc-wallet-mac
 ```
 
 A successful verification shows the source commit and the workflow file that
