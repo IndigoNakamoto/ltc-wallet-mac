@@ -5,6 +5,10 @@ use crate::error::WalletError;
 
 pub const STOP_GAP: usize = 50;
 pub const BATCH_SIZE: usize = 5;
+/// Floor when Electrum has no fee estimate (or returns an unusable value).
+pub const MIN_FEE_RATE_SAT_VB: u64 = 1;
+/// Target confirmation blocks for `blockchain.estimatefee`.
+const FEE_ESTIMATE_BLOCKS: usize = 2;
 
 /// Concrete client type used across the crate.
 pub type ElectrumClient = BdkElectrumClient<Client>;
@@ -134,4 +138,21 @@ fn handshake(client: &ElectrumClient) -> Result<(), bdk_electrum::electrum_clien
         Ok(_) => Ok(()),
         Err(_) => client.inner.ping(),
     }
+}
+
+/// Estimate a fee rate in sat/vB via Electrum `blockchain.estimatefee`.
+///
+/// Electrum returns LTC/kB (same units as Bitcoin Core). Values `<= 0` mean
+/// the server has no estimate; we then return the floor rate.
+pub fn estimate_fee_rate_sat_vb(client: &ElectrumClient) -> Result<(u64, bool), WalletError> {
+    let btc_per_kb = client
+        .inner
+        .estimate_fee(FEE_ESTIMATE_BLOCKS)
+        .map_err(|e| WalletError::Electrum(e.to_string()))?;
+    if !btc_per_kb.is_finite() || btc_per_kb <= 0.0 {
+        return Ok((MIN_FEE_RATE_SAT_VB, true));
+    }
+    // LTC/kB → litoshis/vB: * 1e8 / 1000 = * 1e5
+    let sat_vb = (btc_per_kb * 100_000.0).ceil().max(1.0) as u64;
+    Ok((sat_vb.max(MIN_FEE_RATE_SAT_VB), false))
 }

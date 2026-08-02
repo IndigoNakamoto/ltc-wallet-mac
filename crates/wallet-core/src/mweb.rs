@@ -42,6 +42,16 @@ use crate::rpc;
 /// old `DEFAULT_GAP_LIMIT` of 20 silently missed coins at higher indices.
 pub const MWEB_GAP_LIMIT: u32 = 1000;
 
+/// Sum of mature, spendable MWEB coin amounts at `tip_height`.
+pub fn spendable_mweb_sats(runtime: &MwebRuntime, tip_height: u32) -> u64 {
+    runtime
+        .store
+        .db()
+        .unspent_spendable(tip_height, MWEB_PEGIN_MATURITY)
+        .iter()
+        .fold(0u64, |acc, c| acc.saturating_add(c.amount))
+}
+
 pub struct MwebRuntime {
     pub store: MwebStore,
     pub keys: MasterKeys,
@@ -1289,35 +1299,67 @@ pub fn pegin(
     // A peg-in tx carries MWEB extension data that Electrum servers reject
     // ("TX decode failed"), so it must take the RPC/P2P path like other MWEB txs.
     broadcast_mweb_tx(&tx, rpc_url, peers, network)?;
+    apply_pegin_locally(wallet, runtime, &tx, prepared.outputs, &req)
+}
+
+/// Credit MWEB outputs and debit transparent inputs for a peg-in we just built
+/// (or repaired from RPC). Electrum never serves these txs, so the local apply
+/// is the only way the transparent balance stays honest.
+pub(crate) fn apply_pegin_locally(
+    wallet: &mut PersistedWallet<Connection>,
+    runtime: &mut MwebRuntime,
+    tx: &bdk_wallet::bitcoin::Transaction,
+    outputs: Vec<bdk_mweb::MwebCoin>,
+    req: &PeginRequest,
+) -> Result<PeginResult, WalletError> {
     let tip = wallet.latest_checkpoint().height();
+    let ts = now_ts();
     let mut output_ids = Vec::new();
-    for mut coin in prepared.outputs {
+    for mut coin in outputs {
         coin.is_pegin = true;
         coin.block_height = Some(tip);
         output_ids.push(hex::encode(coin.output_id));
         runtime.store.db_mut().insert(coin);
     }
     runtime.advance_receive_index();
+    // Spend transparent inputs immediately. Without this, MWEB balance rises
+    // while transparent UTXOs remain, and Total roughly doubles.
+    wallet.apply_unconfirmed_txs([(tx.clone(), ts)]);
     let txid = tx.compute_txid().to_string();
     let fee_sats = req.transparent_fee_sats.saturating_add(req.mweb_fee_sats);
-    // Net matches what BDK will compute for the transparent tx once it syncs:
-    // the peg-in output (amount + MWEB fee) plus the transparent fee leave the
-    // transparent wallet. The entry is deduped against that record by txid.
-    runtime.history.record(MwebHistoryEntry {
-        id: txid.clone(),
-        kind: TxKind::Pegin,
-        net_sats: -((req.amount_sats.saturating_add(fee_sats)) as i64),
-        fee_sats: Some(fee_sats),
-        timestamp: now_ts(),
-        output_ids,
-        input_ids: Vec::new(),
-        confirmed_height: None,
-    });
+    // Net matches the transparent spend: peg-in amount + both fees. Deduped
+    // against the BDK history row by txid once the graph has the tx.
+    if !runtime.history.entries.iter().any(|e| e.id == txid) {
+        runtime.history.record(MwebHistoryEntry {
+            id: txid.clone(),
+            kind: TxKind::Pegin,
+            net_sats: -((req.amount_sats.saturating_add(fee_sats)) as i64),
+            fee_sats: Some(fee_sats),
+            timestamp: ts,
+            output_ids,
+            input_ids: Vec::new(),
+            confirmed_height: None,
+        });
+    }
     Ok(PeginResult {
         txid,
         fee_sats,
         maturity_blocks: MWEB_PEGIN_MATURITY,
     })
+}
+
+/// Apply a peg-in transaction fetched from RPC into the transparent graph only
+/// (MWEB coins are already in the store from broadcast / sync). Used to repair
+/// wallets that pegged in before local apply existed.
+pub(crate) fn apply_pegin_transparent_spend(
+    wallet: &mut PersistedWallet<Connection>,
+    tx: bdk_wallet::bitcoin::Transaction,
+) {
+    let txid = tx.compute_txid();
+    if wallet.get_tx(txid).is_some() {
+        return;
+    }
+    wallet.apply_unconfirmed_txs([(tx, now_ts())]);
 }
 
 /// Broadcast a transaction that carries MWEB data (peg-in, peg-out, MWEB send).
@@ -1525,4 +1567,68 @@ pub fn pegout(
         wtxid,
         fee_sats: req.fee_sats,
     })
+}
+
+#[cfg(test)]
+mod pegin_balance_tests {
+    use super::*;
+    use bdk_mweb::keys::{MasterKeyScheme, MasterKeys};
+    use bdk_wallet::bitcoin::hex::FromHex;
+    use bdk_wallet::bitcoin::Network;
+    use bdk_wallet::test_utils::get_funded_wallet_wpkh;
+    use bdk_wallet::{extract_prepared_mweb_pegin, SignOptions};
+
+    const SEED_HEX: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";
+
+    #[test]
+    fn pegin_apply_does_not_double_count_balance() {
+        let (mut wallet, _) = get_funded_wallet_wpkh();
+        let prior_transparent = wallet.balance().total().to_sat();
+        assert!(prior_transparent > 0);
+
+        let seed = <Vec<u8>>::from_hex(SEED_HEX).unwrap();
+        let secp = Secp256k1::new();
+        let keys = MasterKeys::from_seed(
+            &seed,
+            Network::Regtest,
+            MasterKeyScheme::LitecoinCore,
+            &secp,
+        )
+        .unwrap();
+
+        let pegin_amount = Amount::from_sat(20_000);
+        let mweb_fee = Amount::from_sat(1_000);
+        let transparent_fee = Amount::from_sat(500);
+        let mut prepared = wallet
+            .prepare_mweb_pegin(&keys, 2, pegin_amount, mweb_fee, transparent_fee, &secp)
+            .expect("prepare_mweb_pegin");
+        assert!(wallet
+            .sign(&mut prepared.psbt, SignOptions::default())
+            .expect("sign"));
+        let tx = extract_prepared_mweb_pegin(&prepared.psbt).expect("extract");
+
+        let mut db = MwebCoinDatabase::new();
+        let tip = wallet.latest_checkpoint().height();
+        for mut coin in prepared.outputs {
+            coin.is_pegin = true;
+            coin.block_height = Some(tip);
+            db.insert(coin);
+        }
+        // The critical apply that production peg-in must perform.
+        wallet.apply_unconfirmed_txs([(tx, 1u64)]);
+
+        let transparent = wallet.balance().total().to_sat();
+        let mweb_total = db.balance();
+        let combined = transparent + mweb_total;
+        // Combined must not exceed prior (fees burn sats).
+        assert!(
+            combined <= prior_transparent,
+            "double-count: prior={prior_transparent} transparent={transparent} mweb={mweb_total}"
+        );
+        assert!(
+            transparent < prior_transparent,
+            "transparent should drop after peg-in apply"
+        );
+        assert!(mweb_total > 0, "mweb should hold peg-in output");
+    }
 }

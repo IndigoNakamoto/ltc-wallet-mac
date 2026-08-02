@@ -45,6 +45,31 @@ type SendResult = {
   fee_sats: number;
 };
 
+type SendPreview = {
+  amount_sats: number;
+  fee_sats: number;
+  fee_rate_sat_vb: number;
+};
+
+type PeginPreview = {
+  amount_sats: number;
+  private_credit_sats: number;
+  mweb_fee_sats: number;
+  transparent_fee_sats: number;
+  total_from_transparent_sats: number;
+};
+
+type MwebSendPreview = {
+  amount_sats: number;
+  fee_sats: number;
+};
+
+type PegoutPreview = {
+  amount_sats: number;
+  fee_sats: number;
+  dust_sats: number;
+};
+
 type TxKind = "transparent" | "pegin" | "pegout" | "mweb-send" | "mweb-receive";
 
 type TxRecord = {
@@ -115,13 +140,13 @@ const VIEW_TITLES: Record<View, string> = {
   settings: "Settings",
 };
 
-const CARDS = ["send", "receive", "private"] as const;
+const CARDS = ["send", "receive", "swap"] as const;
 type Card = (typeof CARDS)[number];
 
 const CARD_TITLES: Record<Card, string> = {
   send: "Send",
   receive: "Receive",
-  private: "Private",
+  swap: "Swap",
 };
 
 type StatusKind = "info" | "success" | "error";
@@ -177,13 +202,31 @@ const el = {
   mwebProgressText: document.querySelector<HTMLElement>("#mweb-progress-text")!,
   address: document.querySelector<HTMLElement>("#address")!,
   receiveQr: document.querySelector<HTMLCanvasElement>("#receive-qr")!,
-  mwebReceive: document.querySelector<HTMLElement>("#mweb-receive")!,
   mwebQr: document.querySelector<HTMLCanvasElement>("#mweb-qr")!,
   mwebAddress: document.querySelector<HTMLElement>("#mweb-address")!,
-  mwebActions: document.querySelector<HTMLElement>("#mweb-actions")!,
+  mwebTools: document.querySelector<HTMLElement>("#mweb-tools")!,
+  sendToggle: document.querySelector<HTMLElement>("#send-toggle")!,
+  sendSegPublic: document.querySelector<HTMLButtonElement>("#send-seg-public")!,
+  sendSegPrivate: document.querySelector<HTMLButtonElement>("#send-seg-private")!,
+  sendPublic: document.querySelector<HTMLElement>("#send-public")!,
+  sendPrivate: document.querySelector<HTMLElement>("#send-private")!,
+  sendBalancePublic: document.querySelector<HTMLElement>("#send-balance-public")!,
+  sendBalancePrivate: document.querySelector<HTMLElement>("#send-balance-private")!,
+  receiveToggle: document.querySelector<HTMLElement>("#receive-toggle")!,
+  receiveSegPublic: document.querySelector<HTMLButtonElement>("#receive-seg-public")!,
+  receiveSegPrivate: document.querySelector<HTMLButtonElement>("#receive-seg-private")!,
+  receivePublic: document.querySelector<HTMLElement>("#receive-public")!,
+  receivePrivate: document.querySelector<HTMLElement>("#receive-private")!,
+  receiveBalancePublic: document.querySelector<HTMLElement>("#receive-balance-public")!,
+  receiveBalancePrivate: document.querySelector<HTMLElement>("#receive-balance-private")!,
+  swapSegIn: document.querySelector<HTMLButtonElement>("#swap-seg-in")!,
+  swapSegOut: document.querySelector<HTMLButtonElement>("#swap-seg-out")!,
+  swapIn: document.querySelector<HTMLElement>("#swap-in")!,
+  swapOut: document.querySelector<HTMLElement>("#swap-out")!,
+  swapBalancePublic: document.querySelector<HTMLElement>("#swap-balance-public")!,
+  swapBalancePrivate: document.querySelector<HTMLElement>("#swap-balance-private")!,
   views: document.querySelector<HTMLElement>("#views")!,
   sheetBody: document.querySelector<HTMLElement>("#sheet-body")!,
-  dragStrip: document.querySelector<HTMLButtonElement>("#drag-strip")!,
   cardTx: document.querySelector<HTMLElement>("#card-tx")!,
   txListRecent: document.querySelector<HTMLUListElement>("#tx-list-recent")!,
   txEmptyRecent: document.querySelector<HTMLElement>("#tx-empty-recent")!,
@@ -218,7 +261,6 @@ const el = {
   sendAddress: document.querySelector<HTMLInputElement>("#send-address")!,
   sendAmount: document.querySelector<HTMLInputElement>("#send-amount")!,
   sendDrain: document.querySelector<HTMLInputElement>("#send-drain")!,
-  sendFeeRate: document.querySelector<HTMLInputElement>("#send-fee-rate")!,
   settingsElectrum: document.querySelector<HTMLInputElement>("#settings-electrum")!,
   settingsValidateTls: document.querySelector<HTMLInputElement>("#settings-validate-tls")!,
   settingsPublicFallback: document.querySelector<HTMLInputElement>("#settings-public-fallback")!,
@@ -228,10 +270,12 @@ const el = {
   settingsPeers: document.querySelector<HTMLInputElement>("#settings-peers")!,
   settingsMwebScheme: document.querySelector<HTMLSelectElement>("#settings-mweb-scheme")!,
   peginAmount: document.querySelector<HTMLInputElement>("#pegin-amount")!,
+  peginDrain: document.querySelector<HTMLInputElement>("#pegin-drain")!,
   mwebSendAddress: document.querySelector<HTMLInputElement>("#mweb-send-address")!,
   mwebSendAmount: document.querySelector<HTMLInputElement>("#mweb-send-amount")!,
-  pegoutAddress: document.querySelector<HTMLInputElement>("#pegout-address")!,
+  mwebSendDrain: document.querySelector<HTMLInputElement>("#mweb-send-drain")!,
   pegoutAmount: document.querySelector<HTMLInputElement>("#pegout-amount")!,
+  pegoutDrain: document.querySelector<HTMLInputElement>("#pegout-drain")!,
   btnCreate: document.querySelector<HTMLButtonElement>("#btn-create")!,
   btnRestore: document.querySelector<HTMLButtonElement>("#btn-restore")!,
   btnMnemonicDone: document.querySelector<HTMLButtonElement>("#btn-mnemonic-done")!,
@@ -268,18 +312,16 @@ const cards = Object.fromEntries(
     card,
     {
       nav: document.querySelector<HTMLButtonElement>(`#nav-${card}`)!,
-      pill: document.querySelector<HTMLButtonElement>(`#pill-${card}`)!,
       pane: document.querySelector<HTMLElement>(`#card-${card}`)!,
     },
   ]),
-) as Record<Card, { nav: HTMLButtonElement; pill: HTMLButtonElement; pane: HTMLElement }>;
+) as Record<Card, { nav: HTMLButtonElement; pane: HTMLElement }>;
 
 let syncing = false;
 let sending = false;
 let currentPhase: Phase = "boot";
 let currentView: View = "balance";
 let activeCard: Card | null = null;
-let lastCard: Card = "send";
 let syncState: SyncState = "idle";
 let lastTxid: string | null = null;
 let txRecords: TxRecord[] = [];
@@ -347,30 +389,28 @@ function updateTitle() {
     currentView === "balance" && activeCard ? CARD_TITLES[activeCard] : VIEW_TITLES[currentView];
 }
 
-/** Reflect activeCard on the sheet, the pills and the sidebar in one place. */
+/** Reflect activeCard on the sheet and the sidebar in one place. */
 function applyCardState() {
   views.balance.pane.dataset.sheet = activeCard ? "expanded" : "collapsed";
   el.cardTx.hidden = activeCard != null;
   for (const card of CARDS) {
-    const { nav, pill, pane } = cards[card];
+    const { nav, pane } = cards[card];
     const active = activeCard === card;
     pane.hidden = !active;
-    pill.setAttribute("aria-selected", String(active));
     nav.setAttribute("aria-selected", String(active));
   }
   views.balance.nav.setAttribute(
     "aria-selected",
     String(currentView === "balance" && activeCard == null),
   );
-  el.dragStrip.setAttribute("aria-expanded", String(activeCard != null));
-  el.dragStrip.setAttribute("aria-label", activeCard ? "Collapse card" : "Open card");
   updateTitle();
 }
 
 function setView(next: View) {
   currentView = next;
-  // Leaving Balance folds the sheet, so the sidebar never shows two selections.
-  if (next !== "balance") activeCard = null;
+  // Switching views folds the sheet — Balance in the sidebar always means the
+  // overview, and the sidebar never shows two selections.
+  activeCard = null;
   for (const view of VIEWS) {
     const { nav, pane } = views[view];
     pane.hidden = view !== next;
@@ -381,15 +421,12 @@ function setView(next: View) {
 }
 
 function setCard(next: Card | null) {
-  if (next && cards[next].pill.hidden) return;
+  if (next && cards[next].nav.hidden) return;
   activeCard = next;
-  if (next) {
-    lastCard = next;
-    if (currentView !== "balance") {
-      setView("balance");
-      // setView clears the card, so re-apply the requested one.
-      activeCard = next;
-    }
+  if (next && currentView !== "balance") {
+    setView("balance");
+    // setView clears the card, so re-apply the requested one.
+    activeCard = next;
   }
   applyCardState();
   el.sheetBody.scrollTop = 0;
@@ -401,11 +438,70 @@ for (const view of VIEWS) {
 
 for (const card of CARDS) {
   cards[card].nav.addEventListener("click", () => setCard(card));
-  cards[card].pill.addEventListener("click", () => setCard(activeCard === card ? null : card));
 }
 
-el.dragStrip.addEventListener("click", () => setCard(activeCard ? null : lastCard));
 el.btnSeeAll.addEventListener("click", () => setView("history"));
+
+/* ---------------------------------------------------------------------------
+   Public/Private segmented toggles inside the Send, Receive and Swap cards
+   --------------------------------------------------------------------------- */
+
+type SegMode = "public" | "private";
+type SwapDirection = "in" | "out";
+
+let sendMode: SegMode = "public";
+let receiveMode: SegMode = "public";
+let swapDirection: SwapDirection = "in";
+
+function applySeg(
+  firstSeg: HTMLButtonElement,
+  firstPanel: HTMLElement,
+  secondSeg: HTMLButtonElement,
+  secondPanel: HTMLElement,
+  firstActive: boolean,
+) {
+  firstSeg.setAttribute("aria-selected", String(firstActive));
+  secondSeg.setAttribute("aria-selected", String(!firstActive));
+  firstPanel.hidden = !firstActive;
+  secondPanel.hidden = firstActive;
+}
+
+function applySegModes() {
+  applySeg(el.sendSegPublic, el.sendPublic, el.sendSegPrivate, el.sendPrivate, sendMode === "public");
+  applySeg(
+    el.receiveSegPublic,
+    el.receivePublic,
+    el.receiveSegPrivate,
+    el.receivePrivate,
+    receiveMode === "public",
+  );
+  applySeg(el.swapSegIn, el.swapIn, el.swapSegOut, el.swapOut, swapDirection === "in");
+}
+
+el.sendSegPublic.addEventListener("click", () => {
+  sendMode = "public";
+  applySegModes();
+});
+el.sendSegPrivate.addEventListener("click", () => {
+  sendMode = "private";
+  applySegModes();
+});
+el.receiveSegPublic.addEventListener("click", () => {
+  receiveMode = "public";
+  applySegModes();
+});
+el.receiveSegPrivate.addEventListener("click", () => {
+  receiveMode = "private";
+  applySegModes();
+});
+el.swapSegIn.addEventListener("click", () => {
+  swapDirection = "in";
+  applySegModes();
+});
+el.swapSegOut.addEventListener("click", () => {
+  swapDirection = "out";
+  applySegModes();
+});
 
 function setStatus(message: string | null, kind: StatusKind = "info") {
   if (statusTimer != null) {
@@ -806,7 +902,9 @@ function updateBusyUi() {
   el.btnRestore.disabled = busy;
   el.sendAddress.disabled = busy;
   el.sendAmount.disabled = busy || drain;
-  el.sendFeeRate.disabled = busy;
+  el.peginAmount.disabled = busy || el.peginDrain.checked;
+  el.mwebSendAmount.disabled = busy || el.mwebSendDrain.checked;
+  el.pegoutAmount.disabled = busy || el.pegoutDrain.checked;
   el.btnPegin.disabled = busy;
   el.btnMwebSend.disabled = busy;
   el.btnPegout.disabled = busy;
@@ -824,12 +922,17 @@ function updateBusyUi() {
 function setMwebVisible(visible: boolean) {
   el.statMweb.hidden = !visible;
   el.mwebStatusCard.hidden = !visible;
-  el.mwebActions.hidden = !visible;
-  el.mwebReceive.hidden = !visible;
-  cards.private.nav.hidden = !visible;
-  cards.private.pill.hidden = !visible;
-  if (!visible && activeCard === "private") setCard(null);
-  if (!visible && lastCard === "private") lastCard = "send";
+  el.mwebTools.hidden = !visible;
+  // Without MWEB there is only one side: hide the toggles and force public.
+  el.sendToggle.hidden = !visible;
+  el.receiveToggle.hidden = !visible;
+  cards.swap.nav.hidden = !visible;
+  if (!visible) {
+    sendMode = "public";
+    receiveMode = "public";
+    applySegModes();
+    if (activeCard === "swap") setCard(null);
+  }
 }
 
 function paymentUri(address: string): string {
@@ -887,6 +990,12 @@ function renderSummary(s: WalletSummary) {
   el.address.textContent = s.receive_address;
   void renderQr(el.receiveQr, s.receive_address);
 
+  // Spendable public balance shown on the Public toggle segments.
+  const publicBalance = formatLtc(s.confirmed_sats);
+  el.sendBalancePublic.textContent = publicBalance;
+  el.receiveBalancePublic.textContent = publicBalance;
+  el.swapBalancePublic.textContent = publicBalance;
+
   const pendingParts: string[] = [];
   if (s.trusted_pending_sats > 0) {
     pendingParts.push(`trusted pending ${formatLtc(s.trusted_pending_sats)}`);
@@ -929,6 +1038,15 @@ function renderCombined(c: CombinedSummary) {
     el.mwebAddress.textContent = c.mweb_receive_address;
     void renderQr(el.mwebQr, c.mweb_receive_address);
   }
+
+  // Spendable private balance shown on the Private toggle segments.
+  let privateBalance = formatLtc(c.mweb_confirmed_sats);
+  if (c.mweb_immature_sats > 0) {
+    privateBalance += ` · maturing ${formatLtc(c.mweb_immature_sats)}`;
+  }
+  el.sendBalancePrivate.textContent = privateBalance;
+  el.receiveBalancePrivate.textContent = privateBalance;
+  el.swapBalancePrivate.textContent = privateBalance;
 }
 
 function renderLastTxid() {
@@ -1660,21 +1778,25 @@ el.btnApplyMwebScheme.addEventListener("click", async () => {
 el.sendDrain.addEventListener("change", () => {
   updateBusyUi();
 });
+el.peginDrain.addEventListener("change", () => {
+  updateBusyUi();
+});
+el.mwebSendDrain.addEventListener("change", () => {
+  updateBusyUi();
+});
+el.pegoutDrain.addEventListener("change", () => {
+  updateBusyUi();
+});
 
 el.sendForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (syncing || sending) return;
 
   const address = el.sendAddress.value.trim();
-  const fee_rate_sat_vb = Number(el.sendFeeRate.value);
   const drain = el.sendDrain.checked;
 
   if (!address) {
     setError("Enter a destination address.");
-    return;
-  }
-  if (!Number.isFinite(fee_rate_sat_vb) || fee_rate_sat_vb < 1 || !Number.isInteger(fee_rate_sat_vb)) {
-    setError("Fee rate must be an integer ≥ 1 sat/vB.");
     return;
   }
 
@@ -1692,7 +1814,26 @@ el.sendForm.addEventListener("submit", async (event) => {
     amount_sats = parsed;
   }
 
-  const amountLabel = drain ? "Entire spendable balance" : formatLtc(amount_sats);
+  sending = true;
+  setError(null);
+  updateBusyUi();
+  showLoading("Calculating fee…");
+  let preview: SendPreview;
+  try {
+    preview = await invoke<SendPreview>("preview_send", {
+      req: { address, amount_sats, drain },
+    });
+  } catch (e) {
+    setError(String(e));
+    sending = false;
+    updateBusyUi();
+    hideLoading();
+    return;
+  } finally {
+    hideLoading();
+  }
+
+  const amountLabel = formatLtc(preview.amount_sats);
   const confirmed = await openConfirm({
     title: "Review transaction",
     message:
@@ -1700,22 +1841,29 @@ el.sendForm.addEventListener("submit", async (event) => {
     rows: [
       ["To", address, true],
       ["Amount", amountLabel],
-      ["Fee rate", `${fee_rate_sat_vb} sat/vB`],
+      ["Network fee", formatLtc(preview.fee_sats)],
+      ...(drain ? ([["Emptying", "All transparent funds"]] as DetailRow[]) : []),
     ],
-    detail:
-      "The exact network fee depends on coin selection and is shown after the transaction is broadcast.",
-    confirmLabel: "Send now",
+    detail: `Fee rate ${preview.fee_rate_sat_vb} sat/vB (estimated).`,
+    confirmLabel: drain ? "Send all now" : "Send now",
   });
-  if (!confirmed) return;
+  if (!confirmed) {
+    sending = false;
+    updateBusyUi();
+    return;
+  }
 
-  sending = true;
-  setError(null);
   updateBusyUi();
   showLoading("Broadcasting transaction…");
   let result: SendResult;
   try {
     result = await invoke<SendResult>("send_ltc", {
-      req: { address, amount_sats, fee_rate_sat_vb, drain },
+      req: {
+        address,
+        amount_sats,
+        fee_rate_sat_vb: preview.fee_rate_sat_vb,
+        drain,
+      },
     });
   } catch (e) {
     setError(String(e));
@@ -1740,7 +1888,7 @@ el.sendForm.addEventListener("submit", async (event) => {
     rows: [
       ["To", address, true],
       ["Amount", amountLabel],
-      ["Network fee", `${result.fee_sats.toLocaleString("en-US")} litoshis`],
+      ["Network fee", formatLtc(result.fee_sats)],
       ["Transaction ID", result.txid, true],
     ],
     copy: { value: result.txid, label: "Copy ID", toast: "Transaction ID copied." },
@@ -1798,29 +1946,66 @@ el.btnLock.addEventListener("click", async () => {
 });
 
 el.btnPegin.addEventListener("click", async () => {
-  const amount_sats = parseLtcToSats(el.peginAmount.value);
-  if (amount_sats == null || amount_sats <= 0) {
-    setError(amountError("peg-in", el.peginAmount.value));
-    return;
+  if (syncing || sending) return;
+  const drain = el.peginDrain.checked;
+  let amount_sats = 0;
+  if (!drain) {
+    const parsed = parseLtcToSats(el.peginAmount.value);
+    if (parsed == null || parsed <= 0) {
+      setError(amountError("peg-in", el.peginAmount.value));
+      return;
+    }
+    amount_sats = parsed;
   }
-  const confirmed = await openConfirm({
-    title: "Move funds to private",
-    message:
-      "A peg-in moves transparent funds onto the MWEB side of the chain, where balances and amounts are confidential.",
-    rows: [["Amount", formatLtc(amount_sats)]],
-    detail: "Pegged-in coins mature after 6 blocks before they can be spent privately.",
-    confirmLabel: "Move to private",
-  });
-  if (!confirmed) return;
 
   sending = true;
   setError(null);
   updateBusyUi();
-  showLoading("Broadcasting peg-in…");
-  let result: { txid: string; maturity_blocks: number };
+  showLoading("Calculating fees…");
+  let preview: PeginPreview;
   try {
-    result = await invoke<{ txid: string; maturity_blocks: number }>("pegin_ltc", {
-      req: { amount_sats },
+    preview = await invoke<PeginPreview>("preview_pegin", {
+      req: { amount_sats, drain },
+    });
+  } catch (e) {
+    setError(String(e));
+    sending = false;
+    updateBusyUi();
+    hideLoading();
+    return;
+  } finally {
+    hideLoading();
+  }
+
+  const confirmed = await openConfirm({
+    title: "Move funds to private",
+    message:
+      "A peg-in moves transparent funds onto the MWEB side of the chain, where balances and amounts are confidential.",
+    rows: [
+      ["Private credit", formatLtc(preview.private_credit_sats)],
+      ["Private network fee", formatLtc(preview.mweb_fee_sats)],
+      ["Miner fee", formatLtc(preview.transparent_fee_sats)],
+      ["Leaves transparent", formatLtc(preview.total_from_transparent_sats)],
+    ],
+    detail: "Pegged-in coins mature after 6 blocks before they can be spent privately.",
+    confirmLabel: drain ? "Move all to private" : "Move to private",
+  });
+  if (!confirmed) {
+    sending = false;
+    updateBusyUi();
+    return;
+  }
+
+  updateBusyUi();
+  showLoading("Broadcasting peg-in…");
+  let result: { txid: string; maturity_blocks: number; fee_sats: number };
+  try {
+    result = await invoke("pegin_ltc", {
+      req: {
+        amount_sats: preview.amount_sats,
+        mweb_fee_sats: preview.mweb_fee_sats,
+        transparent_fee_sats: preview.transparent_fee_sats,
+      },
     });
   } catch (e) {
     setError(String(e));
@@ -1834,13 +2019,15 @@ el.btnPegin.addEventListener("click", async () => {
   lastTxid = result.txid;
   renderLastTxid();
   el.peginAmount.value = "";
+  el.peginDrain.checked = false;
 
   void runSync({ quiet: false });
   await showResult({
     title: "Peg-in sent",
     message: "Broadcast to the network. The funds become spendable on the MWEB side once mature.",
     rows: [
-      ["Amount", formatLtc(amount_sats)],
+      ["Private credit", formatLtc(preview.private_credit_sats)],
+      ["Total fees", formatLtc(result.fee_sats)],
       ["Matures in", `${result.maturity_blocks} blocks`],
       ["Transaction ID", result.txid, true],
     ],
@@ -1849,37 +2036,69 @@ el.btnPegin.addEventListener("click", async () => {
 });
 
 el.btnMwebSend.addEventListener("click", async () => {
+  if (syncing || sending) return;
   const address = el.mwebSendAddress.value.trim();
   if (!address) {
     setError("Enter an MWEB send address (ltcmweb1…).");
     return;
   }
-  const amount_sats = parseLtcToSats(el.mwebSendAmount.value);
-  if (amount_sats == null) {
-    setError(amountError("MWEB send", el.mwebSendAmount.value));
-    return;
+  const drain = el.mwebSendDrain.checked;
+  let amount_sats = 0;
+  if (!drain) {
+    const parsed = parseLtcToSats(el.mwebSendAmount.value);
+    if (parsed == null) {
+      setError(amountError("MWEB send", el.mwebSendAmount.value));
+      return;
+    }
+    amount_sats = parsed;
   }
+
+  sending = true;
+  setError(null);
+  updateBusyUi();
+  showLoading("Calculating fee…");
+  let preview: MwebSendPreview;
+  try {
+    preview = await invoke<MwebSendPreview>("preview_mweb_send", {
+      req: { address, amount_sats, drain },
+    });
+  } catch (e) {
+    setError(String(e));
+    sending = false;
+    updateBusyUi();
+    hideLoading();
+    return;
+  } finally {
+    hideLoading();
+  }
+
   const confirmed = await openConfirm({
     title: "Review private send",
     message:
       "Check the stealth address carefully. Once broadcast, a private transfer cannot be recalled.",
     rows: [
       ["To", address, true],
-      ["Amount", formatLtc(amount_sats)],
+      ["Amount", formatLtc(preview.amount_sats)],
+      ["Network fee", formatLtc(preview.fee_sats)],
     ],
-    detail: "The exact MWEB fee is shown after the transfer is broadcast.",
-    confirmLabel: "Send private",
+    confirmLabel: drain ? "Send all private" : "Send private",
   });
-  if (!confirmed) return;
+  if (!confirmed) {
+    sending = false;
+    updateBusyUi();
+    return;
+  }
 
-  sending = true;
-  setError(null);
   updateBusyUi();
   showLoading("Broadcasting private send…");
   let result: { wtxid: string; fee_sats: number };
   try {
-    result = await invoke<{ wtxid: string; fee_sats: number }>("mweb_send_ltc", {
-      req: { address, amount_sats },
+    result = await invoke("mweb_send_ltc", {
+      req: {
+        address,
+        amount_sats: preview.amount_sats,
+        fee_sats: preview.fee_sats,
+      },
     });
   } catch (e) {
     setError(String(e));
@@ -1892,6 +2111,7 @@ el.btnMwebSend.addEventListener("click", async () => {
 
   el.mwebSendAddress.value = "";
   el.mwebSendAmount.value = "";
+  el.mwebSendDrain.checked = false;
   await refreshCombined();
   await refreshHistory();
   await showResult({
@@ -1899,8 +2119,8 @@ el.btnMwebSend.addEventListener("click", async () => {
     message: "Broadcast over the MWEB network. It stays pending until a block includes it.",
     rows: [
       ["To", address, true],
-      ["Amount", formatLtc(amount_sats)],
-      ["Network fee", `${result.fee_sats.toLocaleString("en-US")} litoshis`],
+      ["Amount", formatLtc(preview.amount_sats)],
+      ["Network fee", formatLtc(result.fee_sats)],
       ["Kernel ID", result.wtxid, true],
     ],
     copy: { value: result.wtxid, label: "Copy ID", toast: "Kernel ID copied." },
@@ -1908,39 +2128,70 @@ el.btnMwebSend.addEventListener("click", async () => {
 });
 
 el.btnPegout.addEventListener("click", async () => {
-  const address = el.pegoutAddress.value.trim();
-  if (!address) {
-    setError("Enter a peg-out address (ltc1…) in the peg-out address field.");
-    return;
+  if (syncing || sending) return;
+  const drain = el.pegoutDrain.checked;
+  let amount_sats = 0;
+  if (!drain) {
+    const parsed = parseLtcToSats(el.pegoutAmount.value);
+    if (parsed == null) {
+      setError(amountError("swap", el.pegoutAmount.value));
+      return;
+    }
+    amount_sats = parsed;
   }
-  const amount_sats = parseLtcToSats(el.pegoutAmount.value);
-  if (amount_sats == null) {
-    setError(amountError("peg-out", el.pegoutAmount.value));
-    return;
-  }
-  if (amount_sats < DUST_LITOSHIS) {
-    setError(`Peg-out amount must be ≥ ${DUST_LITOSHIS} litoshis.`);
-    return;
-  }
-  const confirmed = await openConfirm({
-    title: "Review peg-out",
-    message:
-      "A peg-out returns private funds to a transparent address, where the amount becomes publicly visible.",
-    rows: [
-      ["To", address, true],
-      ["Amount", formatLtc(amount_sats)],
-    ],
-    confirmLabel: "Peg out now",
-  });
-  if (!confirmed) return;
 
   sending = true;
   setError(null);
   updateBusyUi();
-  showLoading("Broadcasting peg-out…");
-  let result: { wtxid: string };
+  showLoading("Preparing swap…");
+  // Funds return to the wallet itself: a fresh transparent address per peg-out
+  // keeps the public history harder to link.
+  let address: string;
+  let preview: PegoutPreview;
   try {
-    result = await invoke<{ wtxid: string }>("pegout_ltc", { req: { address, amount_sats } });
+    address = await invoke<string>("get_receive_address");
+    preview = await invoke<PegoutPreview>("preview_pegout", {
+      req: { address, amount_sats, drain },
+    });
+  } catch (e) {
+    setError(String(e));
+    sending = false;
+    updateBusyUi();
+    hideLoading();
+    return;
+  } finally {
+    hideLoading();
+  }
+
+  const confirmed = await openConfirm({
+    title: "Move funds to public",
+    message:
+      "This returns private funds to a fresh public address of your own, where the amount becomes publicly visible.",
+    rows: [
+      ["To (your new public address)", address, true],
+      ["Amount", formatLtc(preview.amount_sats)],
+      ["Network fee", formatLtc(preview.fee_sats)],
+    ],
+    detail: `Destination dust floor is ${preview.dust_sats.toLocaleString("en-US")} litoshis.`,
+    confirmLabel: drain ? "Move all to public" : "Move to public",
+  });
+  if (!confirmed) {
+    sending = false;
+    updateBusyUi();
+    return;
+  }
+
+  updateBusyUi();
+  showLoading("Broadcasting swap…");
+  let result: { wtxid: string; fee_sats: number };
+  try {
+    result = await invoke("pegout_ltc", {
+      req: {
+        address,
+        amount_sats: preview.amount_sats,
+        fee_sats: preview.fee_sats,
+      },
+    });
   } catch (e) {
     setError(String(e));
     return;
@@ -1950,16 +2201,17 @@ el.btnPegout.addEventListener("click", async () => {
     updateBusyUi();
   }
 
-  el.pegoutAddress.value = "";
   el.pegoutAmount.value = "";
+  el.pegoutDrain.checked = false;
 
   void runSync({ quiet: false });
   await showResult({
-    title: "Peg-out sent",
-    message: "Broadcast to the network. The transparent funds arrive once the peg-out confirms.",
+    title: "Swap to public sent",
+    message: "Broadcast to the network. The public funds arrive once the swap confirms.",
     rows: [
-      ["To", address, true],
-      ["Amount", formatLtc(amount_sats)],
+      ["To (your new public address)", address, true],
+      ["Amount", formatLtc(preview.amount_sats)],
+      ["Network fee", formatLtc(result.fee_sats)],
       ["Kernel ID", result.wtxid, true],
     ],
     copy: { value: result.wtxid, label: "Copy ID", toast: "Kernel ID copied." },

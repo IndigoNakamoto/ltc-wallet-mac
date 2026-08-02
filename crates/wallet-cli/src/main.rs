@@ -213,7 +213,7 @@ fn main() -> Result<()> {
                 .send(SendRequest {
                     address,
                     amount_sats: amount_sats.unwrap_or(0),
-                    fee_rate_sat_vb: fee_rate,
+                    fee_rate_sat_vb: Some(fee_rate),
                     drain,
                 })
                 .context("send")?;

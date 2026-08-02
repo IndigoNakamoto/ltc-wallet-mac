@@ -167,7 +167,7 @@ fn send_rejects_invalid_address() {
         .send(SendRequest {
             address: "not-an-address".into(),
             amount_sats: 1000,
-            fee_rate_sat_vb: 1,
+            fee_rate_sat_vb: Some(1),
             drain: false,
         })
         .expect_err("invalid address");

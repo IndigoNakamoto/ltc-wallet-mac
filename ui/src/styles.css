@@ -310,8 +310,7 @@ code {
   }
 
   .nav,
-  .topbar,
-  .tab-pill {
+  .topbar {
     background: rgba(6, 16, 56, 0.72);
   }
 
@@ -400,14 +399,9 @@ code {
   color: #ffb9b2;
 }
 
-#onboarding,
-#mweb-actions {
+#onboarding {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
-}
-
-#onboarding {
   gap: 1.25rem;
 }
 
@@ -725,69 +719,6 @@ code {
   color: rgba(255, 255, 255, 0.62);
 }
 
-/* Pills straddle the sheet's top edge, as in Nexus. */
-.tab-pills-wrap {
-  position: relative;
-  z-index: 2;
-  flex: 0 0 auto;
-  margin-bottom: -1.3rem;
-  padding: 0 1.5rem;
-}
-
-.tab-pills {
-  display: flex;
-  gap: 0.5rem;
-  max-width: 46rem;
-  margin: 0 auto;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.tab-pills::-webkit-scrollbar {
-  display: none;
-}
-
-.tab-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  flex: 0 0 auto;
-  padding: 0.5rem 1rem;
-  border: 0;
-  border-radius: 999px;
-  /* A fixed navy tint rather than clear glass: the pill straddles the sheet
-     edge, so its white label needs a dark backing on both halves. */
-  background: rgba(6, 18, 58, 0.46);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
-  box-shadow: inset 0 0.5px 0 rgba(238, 235, 235, 0.67), inset 0 0 0 0.5px rgba(216, 210, 210, 0.3),
-    0 2px 4px rgba(0, 0, 0, 0.07);
-  color: var(--text-glass-1);
-  font: inherit;
-  font-weight: 560;
-  cursor: pointer;
-  transition: background 0.12s var(--ease), color 0.12s var(--ease), transform 0.06s var(--ease);
-}
-
-.tab-pill:hover {
-  background: rgba(12, 32, 96, 0.58);
-}
-
-.tab-pill:active {
-  transform: translateY(1px);
-}
-
-.tab-pill:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.85);
-  outline-offset: 2px;
-}
-
-.tab-pill[aria-selected="true"] {
-  background: rgba(255, 255, 255, 0.92);
-  color: #1162e6;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
-}
-
 .sheet {
   position: relative;
   display: flex;
@@ -802,32 +733,6 @@ code {
   box-shadow: 0 -10px 34px -14px rgba(0, 0, 0, 0.45);
 }
 
-.drag-strip {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 100%;
-  height: 1.8rem;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-}
-
-.drag-handle {
-  width: 2.5rem;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--border-strong);
-  opacity: 0.55;
-  transition: opacity 0.12s var(--ease);
-}
-
-.drag-strip:hover .drag-handle,
-.drag-strip:focus-visible .drag-handle {
-  opacity: 1;
-}
-
 .sheet-body {
   display: flex;
   flex-direction: column;
@@ -835,7 +740,7 @@ code {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 0.25rem 1.5rem 1.5rem;
+  padding: 1.35rem 1.5rem 1.5rem;
 }
 
 /* Card swap fade matches the Nexus 300ms fade-in. */
@@ -1080,6 +985,80 @@ textarea {
 }
 
 .send-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Segmented Public/Private toggle (Send, Receive and Swap cards)
+   --------------------------------------------------------------------------- */
+
+.seg-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-3);
+}
+
+.seg {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0.55rem 0.75rem;
+  border: 0;
+  border-radius: calc(var(--radius) - 4px);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-weight: 560;
+  cursor: pointer;
+  transition: background 0.12s var(--ease), color 0.12s var(--ease), box-shadow 0.12s var(--ease);
+}
+
+.seg:hover {
+  color: var(--text-1);
+}
+
+.seg:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.seg[aria-selected="true"] {
+  background: var(--surface-2);
+  color: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.seg-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.seg-balance {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font-size: 0.78rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.seg[aria-selected="true"] .seg-balance {
+  color: var(--text-2);
+}
+
+.seg-panel {
   display: flex;
   flex-direction: column;
   gap: 0.85rem;
@@ -1732,7 +1711,6 @@ textarea {
     max-height: 24rem;
   }
 
-  .tab-pills-wrap,
   .sheet-body {
     padding-left: 1rem;
     padding-right: 1rem;

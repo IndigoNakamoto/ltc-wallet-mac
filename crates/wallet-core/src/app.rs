@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use bdk_mweb::mweb_sync::SyncProgress;
 
-use bdk_wallet::bitcoin::{Address, Amount, FeeRate};
+use bdk_wallet::bitcoin::consensus::encode::deserialize;
+use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Psbt, ScriptBuf, Txid};
 use bdk_wallet::chain::ChainPosition;
 use bdk_wallet::psbt::PsbtUtils;
 use bdk_wallet::rusqlite::Connection;
@@ -13,12 +14,13 @@ use bdk_wallet::{KeychainKind, PersistedWallet, SignOptions};
 
 use crate::descriptors::{self, create_params, load_params};
 use crate::dto::{
-    CombinedSummary, CreateWalletRequest, CreateWalletResponse, MigrateEncryptRequest,
-    MwebBroadcastResult, MwebScheme, MwebSendRequest, PeginRequest, PeginResult, PegoutRequest,
-    RestoreWalletRequest, SendRequest, SendResult, SyncResult, TxKind, TxRecord, UnlockRequest,
-    UpdateSettingsRequest, WalletSettings, WalletSummary,
+    CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate,
+    MigrateEncryptRequest, MwebBroadcastResult, MwebScheme, MwebSendPreview, MwebSendRequest,
+    PeginPreview, PeginRequest, PeginResult, PegoutPreview, PegoutRequest, RestoreWalletRequest,
+    SendPreview, SendRequest, SendResult, SyncResult, TxKind, TxRecord, UnlockRequest,
+    UpdateSettingsRequest, WalletSettings, WalletSummary, DEFAULT_MWEB_FEE_SATS,
 };
-use crate::electrum::{self, BATCH_SIZE, STOP_GAP};
+use crate::electrum::{self, BATCH_SIZE, MIN_FEE_RATE_SAT_VB, STOP_GAP};
 use crate::error::WalletError;
 use crate::meta::{self, WalletMeta};
 use crate::mweb::{self, MwebRuntime};
@@ -536,6 +538,14 @@ impl WalletApp {
             mweb_ms = mweb_started.elapsed().as_millis() as u64;
         }
 
+        // Repair peg-ins that credited MWEB without spending transparent UTXOs
+        // (bug in earlier builds). Prefer Electrum raw tx; fall back to RPC.
+        if state.mweb.is_some() {
+            if let Some(repair_warning) = repair_missing_pegin_spends(state, &client)? {
+                warnings.push(repair_warning);
+            }
+        }
+
         meta::write_meta(&state.data_dir, &meta_from_state(state))?;
 
         let tx_count_after = state.wallet.transactions().count();
@@ -604,51 +614,57 @@ impl WalletApp {
         Ok(())
     }
 
+    /// Estimate a network fee rate (sat/vB) from Electrum.
+    pub fn estimate_fee(&self) -> Result<FeeEstimate, WalletError> {
+        self.ensure_unlocked()?;
+        let mut guard = self.lock_state()?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        let client = connect_electrum(state)?;
+        let (fee_rate_sat_vb, is_fallback) = electrum::estimate_fee_rate_sat_vb(&client)?;
+        Ok(FeeEstimate {
+            fee_rate_sat_vb,
+            is_fallback,
+        })
+    }
+
+    /// Build a send without broadcasting; returns absolute fee and recipient amount.
+    pub fn preview_send(&self, req: SendRequest) -> Result<SendPreview, WalletError> {
+        self.ensure_unlocked()?;
+        let mut guard = self.lock_state()?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        let (fee_rate_sat_vb, psbt, recipient_script) = build_send_psbt(state, &req)?;
+        let fee_sats = psbt
+            .fee_amount()
+            .ok_or_else(|| WalletError::BuildTx("unable to compute fee".into()))?
+            .to_sat();
+        let amount_sats = if req.drain {
+            psbt.unsigned_tx
+                .output
+                .iter()
+                .find(|o| o.script_pubkey == recipient_script)
+                .map(|o| o.value.to_sat())
+                .unwrap_or(0)
+        } else {
+            req.amount_sats
+        };
+        // Persist any change-address reveal staged by the builder.
+        state
+            .wallet
+            .persist(&mut state.db)
+            .map_err(|e| WalletError::Persist(e.to_string()))?;
+        Ok(SendPreview {
+            amount_sats,
+            fee_sats,
+            fee_rate_sat_vb,
+        })
+    }
+
     pub fn send(&self, req: SendRequest) -> Result<SendResult, WalletError> {
         self.ensure_unlocked()?;
         let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
 
-        let network = state.network.to_bitcoin_network();
-        let address = Address::from_str(&req.address)
-            .map_err(|e| WalletError::InvalidAddress(e.to_string()))?
-            .require_network(network)
-            .map_err(|e| WalletError::InvalidAddress(e.to_string()))?;
-
-        let fee_rate = FeeRate::from_sat_per_vb(req.fee_rate_sat_vb)
-            .ok_or_else(|| WalletError::BuildTx("fee_rate_sat_vb must be non-zero".into()))?;
-
-        let dust_relay = FeeRate::from_sat_per_vb(30)
-            .ok_or_else(|| WalletError::BuildTx("internal dust fee rate".into()))?;
-        let min_non_dust = address.script_pubkey().minimal_non_dust_custom(dust_relay);
-
-        let mut tx_builder = state.wallet.build_tx();
-        if req.drain {
-            tx_builder.drain_wallet();
-            tx_builder.drain_to(address.script_pubkey());
-        } else {
-            let amount = Amount::from_sat(req.amount_sats);
-            if amount < min_non_dust {
-                return Err(WalletError::BuildTx(format!(
-                    "amount {} litoshis is below the network dust limit ({} litoshis for this address)",
-                    req.amount_sats,
-                    min_non_dust.to_sat()
-                )));
-            }
-            tx_builder.add_recipient(address.script_pubkey(), amount);
-        }
-        tx_builder.fee_rate(fee_rate);
-        let mut psbt = tx_builder.finish().map_err(|e| {
-            let msg = e.to_string();
-            if msg.to_lowercase().contains("dust") {
-                WalletError::BuildTx(format!(
-                    "output below dust limit ({} litoshis for this address): {msg}",
-                    min_non_dust.to_sat()
-                ))
-            } else {
-                WalletError::BuildTx(msg)
-            }
-        })?;
+        let (_fee_rate_sat_vb, mut psbt, _recipient_script) = build_send_psbt(state, &req)?;
 
         let finalized = state
             .wallet
@@ -673,6 +689,11 @@ impl WalletApp {
                 WalletError::Electrum(crate::error::humanize_broadcast_error(&e.to_string()))
             })?;
 
+        // Keep local balance honest until the next sync sees the broadcast.
+        state
+            .wallet
+            .apply_unconfirmed_txs([(tx.clone(), crate::mweb_history::now_ts())]);
+
         state
             .wallet
             .persist(&mut state.db)
@@ -684,10 +705,29 @@ impl WalletApp {
         })
     }
 
+    pub fn preview_pegin(&self, req: PeginRequest) -> Result<PeginPreview, WalletError> {
+        self.ensure_unlocked()?;
+        let mut guard = self.lock_state()?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        let resolved = resolve_pegin_request(state, req)?;
+        Ok(PeginPreview {
+            amount_sats: resolved.amount_sats,
+            private_credit_sats: resolved
+                .amount_sats
+                .saturating_sub(resolved.mweb_fee_sats),
+            mweb_fee_sats: resolved.mweb_fee_sats,
+            transparent_fee_sats: resolved.transparent_fee_sats,
+            total_from_transparent_sats: resolved
+                .amount_sats
+                .saturating_add(resolved.transparent_fee_sats),
+        })
+    }
+
     pub fn pegin(&self, req: PeginRequest) -> Result<PeginResult, WalletError> {
         self.ensure_unlocked()?;
         let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        let req = resolve_pegin_request(state, req)?;
         let rpc_url = state.litecoin_rpc_url.clone();
         let peers = state.mweb_peers.clone();
         let network = state.network;
@@ -704,10 +744,22 @@ impl WalletApp {
         Ok(result)
     }
 
+    pub fn preview_mweb_send(&self, req: MwebSendRequest) -> Result<MwebSendPreview, WalletError> {
+        self.ensure_unlocked()?;
+        let mut guard = self.lock_state()?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        let resolved = resolve_mweb_send_request(state, req)?;
+        Ok(MwebSendPreview {
+            amount_sats: resolved.amount_sats,
+            fee_sats: resolved.fee_sats,
+        })
+    }
+
     pub fn mweb_send(&self, req: MwebSendRequest) -> Result<MwebBroadcastResult, WalletError> {
         self.ensure_unlocked()?;
         let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        let req = resolve_mweb_send_request(state, req)?;
         let rpc_url = state.litecoin_rpc_url.clone();
         let peers = state.mweb_peers.clone();
         let mweb = state
@@ -721,10 +773,23 @@ impl WalletApp {
         Ok(result)
     }
 
+    pub fn preview_pegout(&self, req: PegoutRequest) -> Result<PegoutPreview, WalletError> {
+        self.ensure_unlocked()?;
+        let mut guard = self.lock_state()?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        let (resolved, dust_sats) = resolve_pegout_request(state, req)?;
+        Ok(PegoutPreview {
+            amount_sats: resolved.amount_sats,
+            fee_sats: resolved.fee_sats,
+            dust_sats,
+        })
+    }
+
     pub fn pegout(&self, req: PegoutRequest) -> Result<MwebBroadcastResult, WalletError> {
         self.ensure_unlocked()?;
         let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        let (req, _) = resolve_pegout_request(state, req)?;
         let rpc_url = state.litecoin_rpc_url.clone();
         let peers = state.mweb_peers.clone();
         let mweb = state
@@ -969,35 +1034,7 @@ impl MemoryBackedApp {
             .lock()
             .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
-        let network = state.network.to_bitcoin_network();
-        let address = Address::from_str(&req.address)
-            .map_err(|e| WalletError::InvalidAddress(e.to_string()))?
-            .require_network(network)
-            .map_err(|e| WalletError::InvalidAddress(e.to_string()))?;
-        let fee_rate = FeeRate::from_sat_per_vb(req.fee_rate_sat_vb)
-            .ok_or_else(|| WalletError::BuildTx("fee_rate_sat_vb must be non-zero".into()))?;
-        let dust_relay = FeeRate::from_sat_per_vb(30)
-            .ok_or_else(|| WalletError::BuildTx("internal dust fee rate".into()))?;
-        let min_non_dust = address.script_pubkey().minimal_non_dust_custom(dust_relay);
-        let mut tx_builder = state.wallet.build_tx();
-        if req.drain {
-            tx_builder.drain_wallet();
-            tx_builder.drain_to(address.script_pubkey());
-        } else {
-            let amount = Amount::from_sat(req.amount_sats);
-            if amount < min_non_dust {
-                return Err(WalletError::BuildTx(format!(
-                    "amount {} litoshis is below the network dust limit ({} litoshis for this address)",
-                    req.amount_sats,
-                    min_non_dust.to_sat()
-                )));
-            }
-            tx_builder.add_recipient(address.script_pubkey(), amount);
-        }
-        tx_builder.fee_rate(fee_rate);
-        let _psbt = tx_builder
-            .finish()
-            .map_err(|e| WalletError::BuildTx(e.to_string()))?;
+        let _ = build_send_psbt(state, &req)?;
         // Unit tests that reach broadcast should not; return a placeholder.
         Err(WalletError::Electrum(
             "memory-backed test app does not broadcast".into(),
@@ -1069,6 +1106,407 @@ impl MemoryBackedApp {
     }
 }
 
+/// Estimated vbytes for a typical peg-in (1–2 inputs + HogEx output + change).
+const PEGIN_FEE_VB_ESTIMATE: u64 = 250;
+
+fn auto_mweb_fee(explicit: u64) -> u64 {
+    if explicit == 0 {
+        DEFAULT_MWEB_FEE_SATS
+    } else {
+        explicit
+    }
+}
+
+fn auto_pegin_transparent_fee(
+    state: &mut WalletState,
+    explicit: u64,
+) -> Result<u64, WalletError> {
+    if explicit > 0 {
+        return Ok(explicit);
+    }
+    let client = connect_electrum(state)?;
+    let (rate, _) = electrum::estimate_fee_rate_sat_vb(&client)?;
+    Ok(rate.saturating_mul(PEGIN_FEE_VB_ESTIMATE).max(500))
+}
+
+fn resolve_pegin_request(
+    state: &mut WalletState,
+    req: PeginRequest,
+) -> Result<PeginRequest, WalletError> {
+    let mweb_fee_sats = auto_mweb_fee(req.mweb_fee_sats);
+    let transparent_fee_sats = auto_pegin_transparent_fee(state, req.transparent_fee_sats)?;
+    let spendable = state.wallet.balance().trusted_spendable().to_sat();
+    let amount_sats = if req.drain {
+        spendable.checked_sub(transparent_fee_sats).ok_or_else(|| {
+            WalletError::BuildTx(format!(
+                "not enough transparent funds to peg in after a ~{} litoshis miner fee",
+                transparent_fee_sats
+            ))
+        })?
+    } else {
+        // The miner fee rides on top of the amount. Catch that here at preview
+        // time, before BDK coin selection fails with a raw "BTC" error.
+        let needed = req.amount_sats.saturating_add(transparent_fee_sats);
+        if needed > spendable {
+            return Err(WalletError::BuildTx(format!(
+                "swapping {} litoshis needs {} litoshis with the ~{} litoshis miner fee, but only {} \
+                 litoshis are spendable — lower the amount or use \"Move all public funds\"",
+                req.amount_sats, needed, transparent_fee_sats, spendable
+            )));
+        }
+        req.amount_sats
+    };
+    if amount_sats <= mweb_fee_sats {
+        return Err(WalletError::BuildTx(format!(
+            "peg-in amount {} litoshis must exceed the MWEB fee ({} litoshis) so a private coin remains",
+            amount_sats, mweb_fee_sats
+        )));
+    }
+    Ok(PeginRequest {
+        amount_sats,
+        mweb_fee_sats,
+        transparent_fee_sats,
+        drain: false,
+    })
+}
+
+fn resolve_mweb_send_request(
+    state: &WalletState,
+    req: MwebSendRequest,
+) -> Result<MwebSendRequest, WalletError> {
+    let fee_sats = auto_mweb_fee(req.fee_sats);
+    let mweb = state
+        .mweb
+        .as_ref()
+        .ok_or_else(|| WalletError::Mweb("MWEB runtime not initialized".into()))?;
+    let tip = state.wallet.latest_checkpoint().height();
+    let spendable = mweb::spendable_mweb_sats(mweb, tip);
+    let amount_sats = if req.drain {
+        spendable.checked_sub(fee_sats).ok_or_else(|| {
+            WalletError::BuildTx(format!(
+                "not enough private funds to send after a {} litoshis MWEB fee",
+                fee_sats
+            ))
+        })?
+    } else {
+        req.amount_sats
+    };
+    if amount_sats == 0 {
+        return Err(WalletError::BuildTx(
+            "private send amount must be greater than zero".into(),
+        ));
+    }
+    if amount_sats.saturating_add(fee_sats) > spendable {
+        return Err(WalletError::BuildTx(format!(
+            "need {} litoshis spendable private (amount + fee) but only {} available",
+            amount_sats.saturating_add(fee_sats),
+            spendable
+        )));
+    }
+    // Validate address early so preview fails before confirm.
+    let net = state.network.to_bitcoin_network();
+    let _ = Address::from_str(&req.address)
+        .map_err(|e| WalletError::InvalidAddress(e.to_string()))?
+        .require_network(net)
+        .map_err(|e| WalletError::InvalidAddress(e.to_string()))?;
+    Ok(MwebSendRequest {
+        address: req.address,
+        amount_sats,
+        fee_sats,
+        drain: false,
+    })
+}
+
+fn resolve_pegout_request(
+    state: &WalletState,
+    req: PegoutRequest,
+) -> Result<(PegoutRequest, u64), WalletError> {
+    let fee_sats = auto_mweb_fee(req.fee_sats);
+    let mweb = state
+        .mweb
+        .as_ref()
+        .ok_or_else(|| WalletError::Mweb("MWEB runtime not initialized".into()))?;
+    let tip = state.wallet.latest_checkpoint().height();
+    let spendable = mweb::spendable_mweb_sats(mweb, tip);
+    let net = state.network.to_bitcoin_network();
+    let dest = Address::from_str(&req.address)
+        .map_err(|e| WalletError::InvalidAddress(e.to_string()))?
+        .require_network(net)
+        .map_err(|e| WalletError::InvalidAddress(e.to_string()))?;
+    let dust_relay = FeeRate::from_sat_per_vb(30)
+        .ok_or_else(|| WalletError::BuildTx("internal dust fee rate".into()))?;
+    let dust_sats = dest
+        .script_pubkey()
+        .minimal_non_dust_custom(dust_relay)
+        .to_sat();
+
+    let amount_sats = if req.drain {
+        let amount = spendable.checked_sub(fee_sats).ok_or_else(|| {
+            WalletError::BuildTx(format!(
+                "not enough private funds to peg out after a {} litoshis MWEB fee",
+                fee_sats
+            ))
+        })?;
+        if amount < dust_sats {
+            return Err(WalletError::BuildTx(format!(
+                "peg-out all would create a {} litoshis output below the {} litoshis dust limit",
+                amount, dust_sats
+            )));
+        }
+        amount
+    } else {
+        req.amount_sats
+    };
+    if amount_sats < dust_sats {
+        return Err(WalletError::BuildTx(format!(
+            "peg-out amount {} litoshis is below the dust limit ({} litoshis for this address)",
+            amount_sats, dust_sats
+        )));
+    }
+    if amount_sats.saturating_add(fee_sats) > spendable {
+        return Err(WalletError::BuildTx(format!(
+            "need {} litoshis spendable private (amount + fee) but only {} available",
+            amount_sats.saturating_add(fee_sats),
+            spendable
+        )));
+    }
+    Ok((
+        PegoutRequest {
+            address: req.address,
+            amount_sats,
+            fee_sats,
+            drain: false,
+        },
+        dust_sats,
+    ))
+}
+
+/// Build a send PSBT. Resolves fee rate from the request or Electrum.
+/// Returns `(fee_rate_sat_vb, psbt, recipient_script)`.
+fn build_send_psbt(
+    state: &mut WalletState,
+    req: &SendRequest,
+) -> Result<(u64, Psbt, ScriptBuf), WalletError> {
+    let network = state.network.to_bitcoin_network();
+    let address = Address::from_str(&req.address)
+        .map_err(|e| WalletError::InvalidAddress(e.to_string()))?
+        .require_network(network)
+        .map_err(|e| WalletError::InvalidAddress(e.to_string()))?;
+
+    let fee_rate_sat_vb = match req.fee_rate_sat_vb {
+        Some(rate) if rate > 0 => rate,
+        _ => {
+            let client = connect_electrum(state)?;
+            electrum::estimate_fee_rate_sat_vb(&client)?.0
+        }
+    };
+    let fee_rate = FeeRate::from_sat_per_vb(fee_rate_sat_vb).ok_or_else(|| {
+        WalletError::BuildTx(format!(
+            "fee_rate_sat_vb must be non-zero (got {fee_rate_sat_vb})"
+        ))
+    })?;
+
+    let dust_relay = FeeRate::from_sat_per_vb(30)
+        .ok_or_else(|| WalletError::BuildTx("internal dust fee rate".into()))?;
+    let recipient_script = address.script_pubkey();
+    let min_non_dust = recipient_script.minimal_non_dust_custom(dust_relay);
+
+    let mut tx_builder = state.wallet.build_tx();
+    if req.drain {
+        tx_builder.drain_wallet();
+        tx_builder.drain_to(recipient_script.clone());
+    } else {
+        let amount = Amount::from_sat(req.amount_sats);
+        if amount < min_non_dust {
+            return Err(WalletError::BuildTx(format!(
+                "amount {} litoshis is below the network dust limit ({} litoshis for this address)",
+                req.amount_sats,
+                min_non_dust.to_sat()
+            )));
+        }
+        tx_builder.add_recipient(recipient_script.clone(), amount);
+    }
+    tx_builder.fee_rate(fee_rate);
+    let psbt = tx_builder.finish().map_err(|e| {
+        let msg = e.to_string();
+        if msg.to_lowercase().contains("dust") {
+            WalletError::BuildTx(format!(
+                "output below dust limit ({} litoshis for this address): {msg}",
+                min_non_dust.to_sat()
+            ))
+        } else {
+            WalletError::BuildTx(msg)
+        }
+    })?;
+    Ok((fee_rate_sat_vb.max(MIN_FEE_RATE_SAT_VB), psbt, recipient_script))
+}
+
+/// Find history peg-ins missing from the transparent graph and apply their spends.
+/// Returns a user-facing warning when repair is still needed but no source worked.
+fn repair_missing_pegin_spends(
+    state: &mut WalletState,
+    client: &crate::electrum::ElectrumClient,
+) -> Result<Option<String>, WalletError> {
+    let Some(mweb) = state.mweb.as_ref() else {
+        return Ok(None);
+    };
+    let missing: Vec<String> = mweb
+        .history
+        .entries
+        .iter()
+        .filter(|e| e.kind == TxKind::Pegin)
+        .filter_map(|e| {
+            let txid = parse_txid(&e.id)?;
+            if state.wallet.get_tx(txid).is_some() {
+                None
+            } else {
+                Some(e.id.clone())
+            }
+        })
+        .collect();
+    if missing.is_empty() {
+        return Ok(None);
+    }
+
+    let mut repaired = 0u32;
+    let mut still_missing = 0u32;
+    let mut last_err: Option<String> = None;
+    for id in &missing {
+        match fetch_pegin_raw_tx(id, client, state) {
+            Ok(bytes) => match deserialize::<bdk_wallet::bitcoin::Transaction>(&bytes) {
+                Ok(tx) => {
+                    mweb::apply_pegin_transparent_spend(&mut state.wallet, tx);
+                    repaired += 1;
+                }
+                Err(e) => {
+                    last_err = Some(format!("decode {id}: {e}"));
+                    still_missing += 1;
+                }
+            },
+            Err(e) => {
+                last_err = Some(e);
+                still_missing += 1;
+            }
+        }
+    }
+    if repaired > 0 {
+        state
+            .wallet
+            .persist(&mut state.db)
+            .map_err(|e| WalletError::Persist(e.to_string()))?;
+    }
+    if still_missing > 0 {
+        if let Some(err) = &last_err {
+            eprintln!("pegin repair: {err}");
+        }
+        let short = missing
+            .first()
+            .map(|id| {
+                if id.len() > 16 {
+                    format!("{}…{}", &id[..8], &id[id.len() - 8..])
+                } else {
+                    id.clone()
+                }
+            })
+            .unwrap_or_default();
+        Ok(Some(format!(
+            "Could not repair {still_missing} peg-in spend(s) ({short}). \
+             Transparent balance may be overstated. Start litecoind (RPC on {}) \
+             or set Litecoin RPC in Settings, then sync again.",
+            state.network.default_rpc_url()
+        )))
+    } else if repaired > 0 {
+        Ok(Some(format!(
+            "Repaired {repaired} peg-in spend(s) so transparent balance matches Private funds."
+        )))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Fetch peg-in raw tx bytes. Electrum often omits MWEB peg-ins, so we also try
+/// configured RPC, a stock local litecoind, other Electrum servers, and (mainnet)
+/// a public explorer hex endpoint.
+fn fetch_pegin_raw_tx(
+    txid_hex: &str,
+    client: &crate::electrum::ElectrumClient,
+    state: &WalletState,
+) -> Result<Vec<u8>, String> {
+    use bdk_electrum::electrum_client::ElectrumApi;
+
+    let mut errors: Vec<String> = Vec::new();
+    let txid = parse_txid(txid_hex).ok_or_else(|| format!("invalid peg-in txid {txid_hex}"))?;
+
+    match client.inner.transaction_get_raw(&txid) {
+        Ok(raw) if !raw.is_empty() => return Ok(raw),
+        Ok(_) => errors.push("sync Electrum returned empty tx".into()),
+        Err(e) => errors.push(format!("sync Electrum: {e}")),
+    }
+
+    let mut rpc_urls: Vec<String> = Vec::new();
+    if let Some(url) = &state.litecoin_rpc_url {
+        rpc_urls.push(url.clone());
+    }
+    let local = state.network.default_rpc_url().to_string();
+    if !rpc_urls.iter().any(|u| u == &local) {
+        rpc_urls.push(local);
+    }
+    for url in &rpc_urls {
+        match crate::rpc::get_raw_transaction_hex(url, txid_hex) {
+            Ok(hex) => match hex::decode(hex.trim()) {
+                Ok(raw) if !raw.is_empty() => return Ok(raw),
+                Ok(_) => errors.push(format!("RPC {url}: empty hex")),
+                Err(e) => errors.push(format!("RPC {url}: bad hex ({e})")),
+            },
+            Err(e) => errors.push(format!("RPC {url}: {e}")),
+        }
+    }
+
+    // Other Electrum servers may still hold the raw bytes even when the sync
+    // server refuses MWEB txs.
+    for url in electrum_candidates(state) {
+        if state.active_electrum_url.as_deref() == Some(url.as_str()) {
+            continue;
+        }
+        match electrum::connect_with_timeout(&url, state.electrum_validate_domain, 10) {
+            Ok(alt) => match alt.inner.transaction_get_raw(&txid) {
+                Ok(raw) if !raw.is_empty() => return Ok(raw),
+                Ok(_) => errors.push(format!("{url}: empty tx")),
+                Err(e) => errors.push(format!("{url}: {e}")),
+            },
+            Err(e) => errors.push(format!("{url}: {e}")),
+        }
+    }
+
+    if state.network == WalletNetwork::Mainnet {
+        match fetch_tx_hex_litecoinspace(txid_hex) {
+            Ok(raw) => return Ok(raw),
+            Err(e) => errors.push(format!("litecoinspace: {e}")),
+        }
+    }
+
+    Err(errors.join("; "))
+}
+
+fn fetch_tx_hex_litecoinspace(txid_hex: &str) -> Result<Vec<u8>, String> {
+    let url = format!("https://litecoinspace.org/api/tx/{txid_hex}/hex");
+    let body = ureq::get(&url)
+        .set("Accept", "text/plain")
+        .call()
+        .map_err(|e| e.to_string())?
+        .into_string()
+        .map_err(|e| e.to_string())?;
+    let hex = body.trim();
+    if hex.is_empty() || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("response was not hex".into());
+    }
+    hex::decode(hex).map_err(|e| e.to_string())
+}
+
+fn parse_txid(hex: &str) -> Option<Txid> {
+    Txid::from_str(hex).ok()
+}
+
 /// Overlay MWEB activity onto the transparent history.
 ///
 /// A peg-in's transparent tx shows up in the BDK graph after a sync; when its
@@ -1084,6 +1522,12 @@ fn merge_mweb_history(records: &mut Vec<TxRecord>, mweb: &MwebRuntime, tip: u32)
     for entry in &mweb.history.entries {
         if let Some(&i) = by_txid.get(&entry.id) {
             records[i].kind = entry.kind;
+            // The BDK row only sees the transparent side, so its fee misses the
+            // MWEB fee (e.g. a peg-in costs miner + MWEB fee). The recorded
+            // entry carries the full amount — prefer it.
+            if entry.fee_sats.is_some() {
+                records[i].fee_sats = entry.fee_sats;
+            }
             continue;
         }
         // Prefer the height resolved and persisted at sync time (covers

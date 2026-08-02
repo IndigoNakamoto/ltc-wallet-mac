@@ -96,7 +96,9 @@ pub struct SendRequest {
     /// Ignored when [`Self::drain`] is true.
     #[serde(default)]
     pub amount_sats: u64,
-    pub fee_rate_sat_vb: u64,
+    /// Fee rate in sat/vB. When omitted or zero, the wallet estimates from Electrum.
+    #[serde(default)]
+    pub fee_rate_sat_vb: Option<u64>,
     /// When true, drain all spendable funds to `address` (send max).
     #[serde(default)]
     pub drain: bool,
@@ -107,6 +109,23 @@ pub struct SendRequest {
 pub struct SendResult {
     pub txid: String,
     pub fee_sats: u64,
+}
+
+/// Dry-run of a send: absolute fee and recipient amount before broadcast.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendPreview {
+    /// Amount that will arrive at the recipient (for drain: total − fee).
+    pub amount_sats: u64,
+    pub fee_sats: u64,
+    pub fee_rate_sat_vb: u64,
+}
+
+/// Network fee-rate estimate.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeeEstimate {
+    pub fee_rate_sat_vb: u64,
+    /// True when Electrum had no estimate and the floor rate was used.
+    pub is_fallback: bool,
 }
 
 /// What a history record represents, so the UI can label it.
@@ -236,22 +255,41 @@ pub struct MwebSyncProgress {
     pub total: u64,
 }
 
+/// Default MWEB kernel fee (0.0005 LTC). Used when the request leaves fee as 0.
+pub const DEFAULT_MWEB_FEE_SATS: u64 = 50_000;
+
 /// Request to peg transparent LTC into MWEB.
+///
+/// `amount_sats` is the peg-in output value (HogEx). The private coin credited is
+/// `amount_sats - mweb_fee_sats`. Transparent inputs also pay `transparent_fee_sats`.
+/// Fee fields of `0` mean “pick automatically”.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeginRequest {
+    /// Ignored when [`Self::drain`] is true.
+    #[serde(default)]
     pub amount_sats: u64,
-    #[serde(default = "default_mweb_fee")]
+    /// MWEB kernel fee; `0` = [`DEFAULT_MWEB_FEE_SATS`].
+    #[serde(default)]
     pub mweb_fee_sats: u64,
-    #[serde(default = "default_transparent_fee")]
+    /// Transparent miner fee; `0` = estimate from Electrum.
+    #[serde(default)]
     pub transparent_fee_sats: u64,
+    /// Peg in all trusted-spendable transparent funds (minus transparent fee).
+    #[serde(default)]
+    pub drain: bool,
 }
 
-fn default_mweb_fee() -> u64 {
-    50_000
-}
-
-fn default_transparent_fee() -> u64 {
-    1_000
+/// Dry-run of a peg-in before broadcast.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PeginPreview {
+    /// Peg-in output value (leaves transparent).
+    pub amount_sats: u64,
+    /// Private coin that will be credited after the MWEB fee.
+    pub private_credit_sats: u64,
+    pub mweb_fee_sats: u64,
+    pub transparent_fee_sats: u64,
+    /// Total transparent spend: peg-in amount + transparent fee.
+    pub total_from_transparent_sats: u64,
 }
 
 /// Result of a peg-in broadcast.
@@ -262,22 +300,48 @@ pub struct PeginResult {
     pub maturity_blocks: u32,
 }
 
-/// Request to send MWEB → MWEB.
+/// Request to send MWEB → MWEB. `fee_sats` of `0` means auto.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MwebSendRequest {
     pub address: String,
+    /// Ignored when [`Self::drain`] is true.
+    #[serde(default)]
     pub amount_sats: u64,
-    #[serde(default = "default_mweb_fee")]
+    #[serde(default)]
+    pub fee_sats: u64,
+    /// Send all spendable private funds minus the kernel fee.
+    #[serde(default)]
+    pub drain: bool,
+}
+
+/// Dry-run of a private send.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MwebSendPreview {
+    pub amount_sats: u64,
     pub fee_sats: u64,
 }
 
-/// Request to peg MWEB out to a transparent address.
+/// Request to peg MWEB out to a transparent address. `fee_sats` of `0` means auto.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PegoutRequest {
     pub address: String,
+    /// Ignored when [`Self::drain`] is true.
+    #[serde(default)]
     pub amount_sats: u64,
-    #[serde(default = "default_mweb_fee")]
+    #[serde(default)]
     pub fee_sats: u64,
+    /// Peg out all spendable private funds minus the kernel fee.
+    #[serde(default)]
+    pub drain: bool,
+}
+
+/// Dry-run of a peg-out.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PegoutPreview {
+    pub amount_sats: u64,
+    pub fee_sats: u64,
+    /// Minimum non-dust for the destination script (litoshis).
+    pub dust_sats: u64,
 }
 
 /// Result of an MWEB-only broadcast (identified by wtxid).

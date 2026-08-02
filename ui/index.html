@@ -228,18 +228,20 @@
           </button>
           <button
             type="button"
-            id="nav-private"
+            id="nav-swap"
             class="nav-item"
             role="tab"
-            aria-controls="card-private"
+            aria-controls="card-swap"
             aria-selected="false"
             hidden
           >
             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 3l7 3v5.4c0 4.4-2.9 7.9-7 9.6-4.1-1.7-7-5.2-7-9.6V6l7-3Z" />
-              <path d="m9 12 2.2 2.2L15.5 10" />
+              <path d="M4 7.5h13" />
+              <path d="m13.5 3.5 4 4-4 4" />
+              <path d="M20 16.5H7" />
+              <path d="m10.5 12.5-4 4 4 4" />
             </svg>
-            <span class="nav-label">Private</span>
+            <span class="nav-label">Swap</span>
           </button>
           <button
             type="button"
@@ -331,45 +333,7 @@
               </div>
             </div>
 
-            <div class="tab-pills-wrap">
-              <div class="tab-pills" role="tablist" aria-label="Wallet actions">
-                <button type="button" id="pill-send" class="tab-pill" role="tab" aria-selected="false">
-                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 21V9" />
-                    <path d="m7 13 5-5 5 5" />
-                    <path d="M4 4h16" />
-                  </svg>
-                  <span>Send</span>
-                </button>
-                <button type="button" id="pill-receive" class="tab-pill" role="tab" aria-selected="false">
-                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 3v12" />
-                    <path d="m7 11 5 5 5-5" />
-                    <path d="M4 20h16" />
-                  </svg>
-                  <span>Receive</span>
-                </button>
-                <button type="button" id="pill-private" class="tab-pill" role="tab" aria-selected="false" hidden>
-                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M12 3l7 3v5.4c0 4.4-2.9 7.9-7 9.6-4.1-1.7-7-5.2-7-9.6V6l7-3Z" />
-                    <path d="m9 12 2.2 2.2L15.5 10" />
-                  </svg>
-                  <span>Private</span>
-                </button>
-              </div>
-            </div>
-
             <div class="sheet" id="sheet">
-              <button
-                type="button"
-                class="drag-strip"
-                id="drag-strip"
-                aria-label="Collapse card"
-                aria-expanded="false"
-              >
-                <span class="drag-handle" aria-hidden="true"></span>
-              </button>
-
               <div class="sheet-body" id="sheet-body">
                 <div class="sheet-card" id="card-tx">
                   <div class="sheet-head">
@@ -386,24 +350,48 @@
                   </div>
                 </div>
 
-                <div class="sheet-card" id="card-send" role="tabpanel" aria-labelledby="pill-send" hidden>
+                <div class="sheet-card" id="card-send" role="tabpanel" aria-labelledby="nav-send" hidden>
                   <div class="sheet-head">
                     <h3>Send Litecoin</h3>
                   </div>
-                  <form id="send-form" class="send-form">
-                    <label class="field">
-                      <span class="field-label">Recipient address</span>
-                      <input
-                        id="send-address"
-                        class="mono"
-                        type="text"
-                        autocomplete="off"
-                        spellcheck="false"
-                        placeholder="ltc1…"
-                        required
-                      />
-                    </label>
-                    <div class="field-grid">
+                  <div class="seg-toggle" id="send-toggle" role="tablist" aria-label="Send from">
+                    <button
+                      type="button"
+                      id="send-seg-public"
+                      class="seg"
+                      role="tab"
+                      aria-selected="true"
+                      aria-controls="send-public"
+                    >
+                      <span class="seg-label">Public</span>
+                      <span class="seg-balance" id="send-balance-public">—</span>
+                    </button>
+                    <button
+                      type="button"
+                      id="send-seg-private"
+                      class="seg"
+                      role="tab"
+                      aria-selected="false"
+                      aria-controls="send-private"
+                    >
+                      <span class="seg-label">Private <span class="badge badge-accent">MWEB</span></span>
+                      <span class="seg-balance" id="send-balance-private">—</span>
+                    </button>
+                  </div>
+                  <div id="send-public" class="seg-panel" role="tabpanel" aria-labelledby="send-seg-public">
+                    <form id="send-form" class="send-form">
+                      <label class="field">
+                        <span class="field-label">Recipient address</span>
+                        <input
+                          id="send-address"
+                          class="mono"
+                          type="text"
+                          autocomplete="off"
+                          spellcheck="false"
+                          placeholder="ltc1…"
+                          required
+                        />
+                      </label>
                       <label class="field">
                         <span class="field-label">Amount (LTC)</span>
                         <input
@@ -414,97 +402,18 @@
                           autocomplete="off"
                         />
                       </label>
-                      <label class="field">
-                        <span class="field-label">Fee rate (sat/vB)</span>
-                        <input id="send-fee-rate" type="number" min="1" step="1" value="1" required />
+                      <label class="check">
+                        <input id="send-drain" type="checkbox" />
+                        <span>Send all — empty the public balance</span>
                       </label>
-                    </div>
-                    <label class="check">
-                      <input id="send-drain" type="checkbox" />
-                      <span>Send max — drain the whole transparent balance</span>
-                    </label>
-                    <div class="row">
-                      <button type="submit" id="btn-send" class="btn btn-primary">Review and send</button>
-                    </div>
-                  </form>
-                  <p class="hint mono" id="last-txid" hidden></p>
-                </div>
-
-                <div class="sheet-card" id="card-receive" role="tabpanel" aria-labelledby="pill-receive" hidden>
-                  <div class="sheet-head">
-                    <h3>Your Litecoin address</h3>
-                  </div>
-                  <div class="receive-row">
-                    <div class="qr-card">
-                      <canvas id="receive-qr" width="176" height="176" aria-label="Receive address QR code"></canvas>
-                    </div>
-                    <div class="receive-meta">
-                      <p class="mono receive-address" id="address"></p>
+                      <p class="hint" id="send-fee-hint">Network fee is calculated automatically.</p>
                       <div class="row">
-                        <button type="button" id="btn-copy" class="btn btn-primary">
-                          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
-                            <rect x="9" y="9" width="11" height="11" rx="2" />
-                            <path d="M15 5.5A1.5 1.5 0 0 0 13.5 4H6a2 2 0 0 0-2 2v7.5A1.5 1.5 0 0 0 5.5 15" />
-                          </svg>
-                          <span class="btn-label">Copy</span>
-                        </button>
-                        <button type="button" id="btn-address" class="btn btn-secondary">
-                          <span class="btn-label">New address</span>
-                        </button>
+                        <button type="submit" id="btn-send" class="btn btn-primary">Review and send</button>
                       </div>
-                      <p class="hint">
-                        A fresh address per payment keeps your history harder to link. Old addresses keep
-                        working.
-                      </p>
-                    </div>
+                    </form>
                   </div>
-
-                  <div class="card card-note" id="mweb-receive" hidden>
-                    <h3>Private address <span class="badge badge-accent">MWEB</span></h3>
-                    <p class="lede">A stealth address for confidential transfers from MWEB-aware wallets.</p>
-                    <div class="receive-row">
-                      <div class="qr-card">
-                        <canvas id="mweb-qr" width="176" height="176" aria-label="MWEB address QR code"></canvas>
-                      </div>
-                      <div class="receive-meta">
-                        <p class="mono receive-address" id="mweb-address"></p>
-                        <div class="row">
-                          <button type="button" id="btn-copy-mweb" class="btn btn-secondary">
-                            <span class="btn-label">Copy MWEB address</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="sheet-card" id="card-private" role="tabpanel" aria-labelledby="pill-private" hidden>
-                  <div id="mweb-actions" hidden>
-                    <div class="sheet-head">
-                      <h3>Private (MWEB)</h3>
-                    </div>
-
-                    <div class="card card-note">
-                      <p class="lede">
-                        Exchanges and non-MWEB wallets fund your normal <code>ltc1</code> address first. Move
-                        those funds private with a peg-in; a peg-out returns them to a transparent address.
-                      </p>
-                    </div>
-
-                    <div class="card">
-                      <h3>Peg in</h3>
-                      <p class="lede">Move transparent funds into the MWEB side. Matures after 6 blocks.</p>
-                      <label class="field">
-                        <span class="field-label">Amount (LTC)</span>
-                        <input id="pegin-amount" type="text" inputmode="decimal" placeholder="0.001" />
-                      </label>
-                      <div class="row">
-                        <button type="button" id="btn-pegin" class="btn btn-primary">Move to private</button>
-                      </div>
-                    </div>
-
-                    <div class="card">
-                      <h3>Private send</h3>
+                  <div id="send-private" class="seg-panel" role="tabpanel" aria-labelledby="send-seg-private" hidden>
+                    <div class="send-form">
                       <p class="lede">Confidential transfer to another MWEB stealth address.</p>
                       <label class="field">
                         <span class="field-label">Recipient (ltcmweb1…)</span>
@@ -521,62 +430,164 @@
                         <span class="field-label">Amount (LTC)</span>
                         <input id="mweb-send-amount" type="text" inputmode="decimal" placeholder="0.001" />
                       </label>
+                      <label class="check">
+                        <input id="mweb-send-drain" type="checkbox" />
+                        <span>Send all — empty the private balance</span>
+                      </label>
+                      <p class="hint">Private network fee is calculated automatically.</p>
                       <div class="row">
-                        <button type="button" id="btn-mweb-send" class="btn btn-primary">Send private</button>
+                        <button type="button" id="btn-mweb-send" class="btn btn-primary">Review and send</button>
                       </div>
                     </div>
+                  </div>
+                  <p class="hint mono" id="last-txid" hidden></p>
+                </div>
 
-                    <div class="card">
-                      <h3>Peg out</h3>
-                      <p class="lede">Return private funds to a transparent address.</p>
+                <div class="sheet-card" id="card-receive" role="tabpanel" aria-labelledby="nav-receive" hidden>
+                  <div class="sheet-head">
+                    <h3>Receive Litecoin</h3>
+                  </div>
+                  <div class="seg-toggle" id="receive-toggle" role="tablist" aria-label="Receive to">
+                    <button
+                      type="button"
+                      id="receive-seg-public"
+                      class="seg"
+                      role="tab"
+                      aria-selected="true"
+                      aria-controls="receive-public"
+                    >
+                      <span class="seg-label">Public</span>
+                      <span class="seg-balance" id="receive-balance-public">—</span>
+                    </button>
+                    <button
+                      type="button"
+                      id="receive-seg-private"
+                      class="seg"
+                      role="tab"
+                      aria-selected="false"
+                      aria-controls="receive-private"
+                    >
+                      <span class="seg-label">Private <span class="badge badge-accent">MWEB</span></span>
+                      <span class="seg-balance" id="receive-balance-private">—</span>
+                    </button>
+                  </div>
+                  <div id="receive-public" class="seg-panel" role="tabpanel" aria-labelledby="receive-seg-public">
+                    <div class="receive-row">
+                      <div class="qr-card">
+                        <canvas id="receive-qr" width="176" height="176" aria-label="Receive address QR code"></canvas>
+                      </div>
+                      <div class="receive-meta">
+                        <p class="mono receive-address" id="address"></p>
+                        <div class="row">
+                          <button type="button" id="btn-copy" class="btn btn-primary">
+                            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                              <rect x="9" y="9" width="11" height="11" rx="2" />
+                              <path d="M15 5.5A1.5 1.5 0 0 0 13.5 4H6a2 2 0 0 0-2 2v7.5A1.5 1.5 0 0 0 5.5 15" />
+                            </svg>
+                            <span class="btn-label">Copy</span>
+                          </button>
+                          <button type="button" id="btn-address" class="btn btn-secondary">
+                            <span class="btn-label">New address</span>
+                          </button>
+                        </div>
+                        <p class="hint">
+                          A fresh address per payment keeps your history harder to link. Old addresses keep
+                          working.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div id="receive-private" class="seg-panel" role="tabpanel" aria-labelledby="receive-seg-private" hidden>
+                    <div class="receive-row">
+                      <div class="qr-card">
+                        <canvas id="mweb-qr" width="176" height="176" aria-label="MWEB address QR code"></canvas>
+                      </div>
+                      <div class="receive-meta">
+                        <p class="mono receive-address" id="mweb-address"></p>
+                        <div class="row">
+                          <button type="button" id="btn-copy-mweb" class="btn btn-primary">
+                            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
+                              <rect x="9" y="9" width="11" height="11" rx="2" />
+                              <path d="M15 5.5A1.5 1.5 0 0 0 13.5 4H6a2 2 0 0 0-2 2v7.5A1.5 1.5 0 0 0 5.5 15" />
+                            </svg>
+                            <span class="btn-label">Copy</span>
+                          </button>
+                        </div>
+                        <p class="hint">
+                          A stealth address for confidential transfers from MWEB-aware wallets. It can be
+                          reused without linking your payments.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="sheet-card" id="card-swap" role="tabpanel" aria-labelledby="nav-swap" hidden>
+                  <div class="sheet-head">
+                    <h3>Swap between public and private</h3>
+                  </div>
+                  <p class="lede">
+                    Swaps move your own funds between the public (<code>ltc1</code>) and private (MWEB)
+                    sides of the chain. Nothing leaves your wallet.
+                  </p>
+                  <div class="seg-toggle" id="swap-toggle" role="tablist" aria-label="Swap direction">
+                    <button
+                      type="button"
+                      id="swap-seg-in"
+                      class="seg"
+                      role="tab"
+                      aria-selected="true"
+                      aria-controls="swap-in"
+                    >
+                      <span class="seg-label">Public → Private</span>
+                      <span class="seg-balance" id="swap-balance-public">—</span>
+                    </button>
+                    <button
+                      type="button"
+                      id="swap-seg-out"
+                      class="seg"
+                      role="tab"
+                      aria-selected="false"
+                      aria-controls="swap-out"
+                    >
+                      <span class="seg-label">Private → Public</span>
+                      <span class="seg-balance" id="swap-balance-private">—</span>
+                    </button>
+                  </div>
+                  <div id="swap-in" class="seg-panel" role="tabpanel" aria-labelledby="swap-seg-in">
+                    <div class="send-form">
+                      <p class="lede">Move public funds into the MWEB side. Matures after 6 blocks.</p>
                       <label class="field">
-                        <span class="field-label">Destination (ltc1…)</span>
-                        <input
-                          id="pegout-address"
-                          class="mono"
-                          type="text"
-                          autocomplete="off"
-                          spellcheck="false"
-                          placeholder="ltc1…"
-                        />
+                        <span class="field-label">Amount (LTC)</span>
+                        <input id="pegin-amount" type="text" inputmode="decimal" placeholder="0.001" />
                       </label>
+                      <label class="check">
+                        <input id="pegin-drain" type="checkbox" />
+                        <span>Move all public funds</span>
+                      </label>
+                      <p class="hint">Fees are calculated automatically (miner + private network).</p>
+                      <div class="row">
+                        <button type="button" id="btn-pegin" class="btn btn-primary">Move to private</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div id="swap-out" class="seg-panel" role="tabpanel" aria-labelledby="swap-seg-out" hidden>
+                    <div class="send-form">
+                      <p class="lede">
+                        Return private funds to your public balance. They arrive on a fresh
+                        <code>ltc1</code> address of your own, generated automatically.
+                      </p>
                       <label class="field">
                         <span class="field-label">Amount (LTC)</span>
                         <input id="pegout-amount" type="text" inputmode="decimal" placeholder="0.001" />
                       </label>
-                      <div class="row">
-                        <button type="button" id="btn-pegout" class="btn btn-secondary">
-                          Peg out to transparent
-                        </button>
-                      </div>
-                    </div>
-
-                    <div class="card">
-                      <h3>MWEB data</h3>
-                      <p class="lede">
-                        Rebuild the local MWEB coin database from scratch. This re-downloads the full UTXO set
-                        and can take a while.
-                      </p>
-                      <div class="row">
-                        <button type="button" id="btn-resync-mweb" class="btn btn-ghost">Resync MWEB</button>
-                      </div>
-                      <label class="field">
-                        <span class="field-label">MWEB derivation scheme</span>
-                        <select id="settings-mweb-scheme">
-                          <option value="litecoin-core">Litecoin Core (default)</option>
-                          <option value="mwebd">Nexus / mwebd</option>
-                          <option value="lip0004">LIP-0004</option>
-                        </select>
-                        <span class="hint">
-                          Which BIP32 branch derives your MWEB keys. Changing it wipes local MWEB data
-                          and rescans under the new scheme — coins are re-discovered from the chain,
-                          and transparent funds are untouched.
-                        </span>
+                      <label class="check">
+                        <input id="pegout-drain" type="checkbox" />
+                        <span>Move all private funds</span>
                       </label>
+                      <p class="hint">Fee is automatic; amount stays above the dust limit.</p>
                       <div class="row">
-                        <button type="button" id="btn-apply-mweb-scheme" class="btn btn-ghost">
-                          Apply scheme &amp; rescan
-                        </button>
+                        <button type="button" id="btn-pegout" class="btn btn-primary">Move to public</button>
                       </div>
                     </div>
                   </div>
@@ -662,6 +673,35 @@
               </label>
               <div class="row">
                 <button type="button" id="btn-save-settings" class="btn btn-primary">Save settings</button>
+              </div>
+            </div>
+
+            <div class="card" id="mweb-tools" hidden>
+              <h3>MWEB data</h3>
+              <p class="lede">
+                Rebuild the local MWEB coin database from scratch. This re-downloads the full UTXO set
+                and can take a while.
+              </p>
+              <div class="row">
+                <button type="button" id="btn-resync-mweb" class="btn btn-ghost">Resync MWEB</button>
+              </div>
+              <label class="field">
+                <span class="field-label">MWEB derivation scheme</span>
+                <select id="settings-mweb-scheme">
+                  <option value="litecoin-core">Litecoin Core (default)</option>
+                  <option value="mwebd">Nexus / mwebd</option>
+                  <option value="lip0004">LIP-0004</option>
+                </select>
+                <span class="hint">
+                  Which BIP32 branch derives your MWEB keys. Changing it wipes local MWEB data
+                  and rescans under the new scheme — coins are re-discovered from the chain,
+                  and transparent funds are untouched.
+                </span>
+              </label>
+              <div class="row">
+                <button type="button" id="btn-apply-mweb-scheme" class="btn btn-ghost">
+                  Apply scheme &amp; rescan
+                </button>
               </div>
             </div>
 

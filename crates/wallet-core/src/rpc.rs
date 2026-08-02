@@ -11,12 +11,33 @@ use crate::error::WalletError;
 /// the default data directory, so a bare `http://127.0.0.1:9332` works with a
 /// stock local node even though the cookie rotates on every node restart.
 pub fn send_raw_transaction(rpc_url: &str, tx_hex: &str) -> Result<String, WalletError> {
+    let value = rpc_call(rpc_url, "sendrawtransaction", json!([tx_hex]))?;
+    value
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| WalletError::Rpc("missing result from sendrawtransaction".into()))
+}
+
+/// Fetch a raw transaction hex via litecoind `getrawtransaction`.
+pub fn get_raw_transaction_hex(rpc_url: &str, txid: &str) -> Result<String, WalletError> {
+    let value = rpc_call(rpc_url, "getrawtransaction", json!([txid, false]))?;
+    value
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| WalletError::Rpc("missing result from getrawtransaction".into()))
+}
+
+fn rpc_call(
+    rpc_url: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Result<serde_json::Value, WalletError> {
     let rpc_url = &normalize_rpc_url(rpc_url);
     let body = json!({
         "jsonrpc": "1.0",
         "id": "ltc-wallet",
-        "method": "sendrawtransaction",
-        "params": [tx_hex],
+        "method": method,
+        "params": params,
     });
     let mut request = ureq::post(rpc_url).set("Content-Type", "application/json");
     if !url_has_credentials(rpc_url) {
@@ -49,13 +70,17 @@ pub fn send_raw_transaction(rpc_url: &str, tx_hex: &str) -> Result<String, Walle
             .and_then(|m| m.as_str())
             .map(|m| m.to_string())
             .unwrap_or_else(|| err.to_string());
-        return Err(WalletError::Rpc(crate::error::humanize_broadcast_error(&msg)));
+        let msg = if method == "sendrawtransaction" {
+            crate::error::humanize_broadcast_error(&msg)
+        } else {
+            msg
+        };
+        return Err(WalletError::Rpc(msg));
     }
     value
         .get("result")
-        .and_then(|r| r.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| WalletError::Rpc("missing result from sendrawtransaction".into()))
+        .cloned()
+        .ok_or_else(|| WalletError::Rpc(format!("missing result from {method}")))
 }
 
 /// Prepend `http://` when the URL has no scheme (e.g. a bare `127.0.0.1:9332`),

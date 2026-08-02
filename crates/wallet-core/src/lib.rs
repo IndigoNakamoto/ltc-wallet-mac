@@ -20,10 +20,11 @@ mod seed;
 pub use app::{MemoryBackedApp, WalletApp};
 pub use seed::{derive_preview, DerivePreview, MasterSecret, MwebSchemePreview};
 pub use dto::{
-    CombinedSummary, CreateWalletRequest, CreateWalletResponse, MigrateEncryptRequest,
-    MwebBroadcastResult, MwebScheme, MwebSendRequest, MwebSyncProgress, PeginRequest, PeginResult,
-    PegoutRequest, RestoreWalletRequest, SendRequest, SendResult, SyncResult, TxKind, TxRecord,
-    UnlockRequest, UpdateSettingsRequest, WalletSettings, WalletSummary,
+    CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate,
+    MigrateEncryptRequest, MwebBroadcastResult, MwebScheme, MwebSendPreview, MwebSendRequest,
+    MwebSyncProgress, PeginPreview, PeginRequest, PeginResult, PegoutPreview, PegoutRequest,
+    RestoreWalletRequest, SendPreview, SendRequest, SendResult, SyncResult, TxKind, TxRecord,
+    UnlockRequest, UpdateSettingsRequest, WalletSettings, WalletSummary, DEFAULT_MWEB_FEE_SATS,
 };
 pub use error::WalletError;
 pub use network::WalletNetwork;

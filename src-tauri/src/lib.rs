@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, State};
 use wallet_core::{
-    CombinedSummary, CreateWalletRequest, CreateWalletResponse, MigrateEncryptRequest,
-    MwebBroadcastResult, MwebSendRequest, MwebSyncProgress, PeginRequest, PeginResult,
-    PegoutRequest, RestoreWalletRequest, SendRequest, SendResult, SyncResult, TxRecord,
-    UnlockRequest, UpdateSettingsRequest, WalletApp, WalletSettings, WalletSummary,
+    CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate,
+    MigrateEncryptRequest, MwebBroadcastResult, MwebSendPreview, MwebSendRequest, MwebSyncProgress,
+    PeginPreview, PeginRequest, PeginResult, PegoutPreview, PegoutRequest, RestoreWalletRequest,
+    SendPreview, SendRequest, SendResult, SyncResult, TxRecord, UnlockRequest,
+    UpdateSettingsRequest, WalletApp, WalletSettings, WalletSummary,
 };
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -167,12 +168,42 @@ async fn get_mweb_receive_address(state: State<'_, Arc<WalletApp>>) -> Result<St
 }
 
 #[tauri::command]
+async fn estimate_fee(state: State<'_, Arc<WalletApp>>) -> Result<FeeEstimate, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.estimate_fee().map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn preview_send(
+    state: State<'_, Arc<WalletApp>>,
+    req: SendRequest,
+) -> Result<SendPreview, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.preview_send(req).map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn send_ltc(
     state: State<'_, Arc<WalletApp>>,
     req: SendRequest,
 ) -> Result<SendResult, String> {
     let wallet = Arc::clone(&state);
     tauri::async_runtime::spawn_blocking(move || wallet.send(req).map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn preview_pegin(
+    state: State<'_, Arc<WalletApp>>,
+    req: PeginRequest,
+) -> Result<PeginPreview, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.preview_pegin(req).map_err(map_err))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -189,12 +220,34 @@ async fn pegin_ltc(
 }
 
 #[tauri::command]
+async fn preview_mweb_send(
+    state: State<'_, Arc<WalletApp>>,
+    req: MwebSendRequest,
+) -> Result<MwebSendPreview, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.preview_mweb_send(req).map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn mweb_send_ltc(
     state: State<'_, Arc<WalletApp>>,
     req: MwebSendRequest,
 ) -> Result<MwebBroadcastResult, String> {
     let wallet = Arc::clone(&state);
     tauri::async_runtime::spawn_blocking(move || wallet.mweb_send(req).map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn preview_pegout(
+    state: State<'_, Arc<WalletApp>>,
+    req: PegoutRequest,
+) -> Result<PegoutPreview, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.preview_pegout(req).map_err(map_err))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -306,9 +359,14 @@ pub fn run() {
             list_transactions,
             get_receive_address,
             get_mweb_receive_address,
+            estimate_fee,
+            preview_send,
             send_ltc,
+            preview_pegin,
             pegin_ltc,
+            preview_mweb_send,
             mweb_send_ltc,
+            preview_pegout,
             pegout_ltc,
             resync_mweb,
             set_mweb_scheme,

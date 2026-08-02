@@ -60,6 +60,14 @@ impl WalletNetwork {
         }
     }
 
+    /// Default litecoind JSON-RPC URL for a stock local node.
+    pub fn default_rpc_url(self) -> &'static str {
+        match self {
+            Self::Mainnet => "http://127.0.0.1:9332",
+            Self::Testnet => "http://127.0.0.1:19332",
+        }
+    }
+
     /// Litecoin Core's DNS seeds, used to find public MWEB-serving peers for
     /// users who do not run their own node (see `crate::discovery`).
     pub fn dns_seeds(self) -> &'static [&'static str] {
