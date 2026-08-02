@@ -908,6 +908,10 @@ function renderSummary(s: WalletSummary) {
 
 function renderCombined(c: CombinedSummary) {
   renderSummary(c.transparent);
+  // Hero "Total balance" is wallet-wide: transparent + MWEB.
+  const grandTotal = c.transparent.total_sats + c.mweb_total_sats;
+  el.balanceTotal.textContent = formatLtc(grandTotal);
+  el.balanceSats.textContent = formatLitoshis(grandTotal);
   setMwebVisible(true);
   let mwebText = formatLtc(c.mweb_total_sats);
   if (c.mweb_immature_sats > 0) {
