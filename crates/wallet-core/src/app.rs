@@ -352,13 +352,17 @@ impl WalletApp {
         Ok(records)
     }
 
+    /// Reveal and persist the next external receive address.
+    ///
+    /// Always advances the derivation index so callers (UI "New address", CLI)
+    /// get a fresh address even when earlier revealed addresses are still unused.
     pub fn receive_address(&self) -> Result<String, WalletError> {
         self.ensure_unlocked()?;
         let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
         let address = state
             .wallet
-            .next_unused_address(KeychainKind::External)
+            .reveal_next_address(KeychainKind::External)
             .to_string();
         state
             .wallet
@@ -932,6 +936,32 @@ impl MemoryBackedApp {
         Ok(summary)
     }
 
+    pub fn summary(&self) -> Result<WalletSummary, WalletError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        build_summary(state)
+    }
+
+    pub fn receive_address(&self) -> Result<String, WalletError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        let address = state
+            .wallet
+            .reveal_next_address(KeychainKind::External)
+            .to_string();
+        state
+            .wallet
+            .persist(&mut state.db)
+            .map_err(|e| WalletError::Persist(e.to_string()))?;
+        Ok(address)
+    }
+
     pub fn send(&self, req: SendRequest) -> Result<SendResult, WalletError> {
         // Minimal send for unit tests that don't hit the network: only build path errors.
         let mut guard = self
@@ -1144,10 +1174,10 @@ mod tests {
 fn build_summary(state: &mut WalletState) -> Result<WalletSummary, WalletError> {
     let balance = state.wallet.balance();
     let tip_height = state.wallet.local_chain().tip().height();
-    let receive_address = state
-        .wallet
-        .next_unused_address(KeychainKind::External)
-        .to_string();
+    // Prefer the last revealed address while it is still unused so a "New
+    // address" click sticks across sync/reload. Once it has been used, reveal
+    // the next index instead of falling back to an earlier unused gap address.
+    let receive_address = current_receive_address(&mut state.wallet);
     state
         .wallet
         .persist(&mut state.db)
@@ -1163,4 +1193,20 @@ fn build_summary(state: &mut WalletState) -> Result<WalletSummary, WalletError> 
         tip_height,
         receive_address,
     })
+}
+
+fn current_receive_address(wallet: &mut PersistedWallet<Connection>) -> String {
+    if let Some(last_idx) = wallet.derivation_index(KeychainKind::External) {
+        let last_still_unused = wallet
+            .list_unused_addresses(KeychainKind::External)
+            .any(|info| info.index == last_idx);
+        if last_still_unused {
+            return wallet
+                .peek_address(KeychainKind::External, last_idx)
+                .to_string();
+        }
+    }
+    wallet
+        .reveal_next_address(KeychainKind::External)
+        .to_string()
 }

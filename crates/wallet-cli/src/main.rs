@@ -86,7 +86,7 @@ enum Command {
     },
     /// Print wallet summary JSON.
     Summary,
-    /// Print the current unused receive address.
+    /// Reveal and print a new receive address.
     Address,
     /// Sync against Electrum (full_scan first, then incremental).
     Sync,

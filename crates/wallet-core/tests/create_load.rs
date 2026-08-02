@@ -120,6 +120,37 @@ fn restore_known_mnemonic_is_deterministic() {
 }
 
 #[test]
+fn receive_address_advances_and_summary_keeps_it() {
+    let dir = tempdir().unwrap();
+    let secrets: Arc<dyn SecretStore> = Arc::new(MemoryStore::new());
+    let app = with_secrets(Arc::clone(&secrets));
+    let created = app
+        .create(
+            dir.path(),
+            CreateWalletRequest {
+                network: WalletNetwork::Testnet,
+                electrum_url: None,
+            },
+        )
+        .expect("create");
+
+    let first = created.summary.receive_address;
+    let second = app.receive_address().expect("new address");
+    let third = app.receive_address().expect("another address");
+
+    assert_ne!(first, second);
+    assert_ne!(second, third);
+    assert!(second.starts_with("tltc1"));
+    assert_eq!(app.summary().expect("summary").receive_address, third);
+
+    let reloaded = {
+        let app = with_secrets(secrets);
+        app.load(dir.path()).expect("load")
+    };
+    assert_eq!(reloaded.receive_address, third);
+}
+
+#[test]
 fn send_rejects_invalid_address() {
     let dir = tempdir().unwrap();
     let app = with_secrets(Arc::new(MemoryStore::new()));
