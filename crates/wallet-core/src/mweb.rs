@@ -18,7 +18,7 @@ use bdk_mweb::p2p::MwebLeafset;
 use bdk_mweb::pmmr::verify_leafset;
 use bdk_mweb::tx_builder::CHANGE_ADDRESS_INDEX;
 use bdk_mweb::MwebCoinDatabase;
-use bdk_mweb::{AddressBook, ChangeSet, SealContext, MWEB_PEGIN_MATURITY};
+use bdk_mweb::{AddressBook, BanReason, ChangeSet, SealContext, MWEB_PEGIN_MATURITY};
 use bdk_wallet::bitcoin::consensus::encode::serialize_hex;
 use bdk_wallet::bitcoin::key::Secp256k1;
 use bdk_wallet::bitcoin::{Address, Amount, NetworkKind};
@@ -60,6 +60,41 @@ pub struct MwebRuntime {
     /// plaintext formats (tests / plaintext-era wallets awaiting migration).
     sealing_key: Option<[u8; 32]>,
     secp: Secp256k1<bdk_wallet::bitcoin::secp256k1::All>,
+}
+
+/// What to tell the user about a failed sync pass, and whether the failure
+/// justifies going looking for another peer.
+struct PassFailure {
+    /// Shown verbatim in the UI, so it has to be plain and actionable.
+    status: String,
+    /// Whether to fall back to peers discovered from the DNS seeds.
+    allow_public_fallback: bool,
+}
+
+/// Interpret a failed sync pass.
+///
+/// Split out as a free function so the decision can be tested without a peer;
+/// the alternative is exercising it only through a live socket, which is how it
+/// went untested before.
+fn classify_pass_failure(err: &bdk_mweb::Error) -> PassFailure {
+    if err.ban_reason() == Some(BanReason::Throttled) {
+        // The peer answered, it just would not serve us: litecoind 0.21.5.6+
+        // meters MWEB serving node-wide and silently drops what it will not
+        // serve. Calling that "unreachable" would send the user debugging
+        // their network, and switching to a public peer would make it worse —
+        // shared peers are the ones most likely to be metered dry, and they
+        // would see queries our own node keeps to itself.
+        return PassFailure {
+            status: "MWEB peer is rate-limiting requests; balance may lag. Run your node \
+                     with -whitelist=noban@127.0.0.1 to exempt this wallet."
+                .into(),
+            allow_public_fallback: false,
+        };
+    }
+    PassFailure {
+        status: format!("MWEB peer unreachable: {err}"),
+        allow_public_fallback: true,
+    }
 }
 
 impl MwebRuntime {
@@ -179,7 +214,7 @@ impl MwebRuntime {
         progress: Option<Arc<SyncProgress>>,
     ) -> Result<(), WalletError> {
         let configured = resolve_peers(peers)?;
-        let mut configured_err = None;
+        let mut configured_failure = None;
         if !configured.is_empty() {
             match self.sync_pass(
                 configured.clone(),
@@ -197,7 +232,17 @@ impl MwebRuntime {
                     self.cross_check_leafset(tip_hash, candidates, network);
                     return Ok(());
                 }
-                Err(e) => configured_err = Some(e),
+                Err(e) => {
+                    let failure = classify_pass_failure(&e);
+                    // A metered node is healthy and it is ours. Keep waiting on
+                    // it rather than defecting to a stranger's.
+                    if !failure.allow_public_fallback {
+                        self.stale = true;
+                        self.last_status = failure.status;
+                        return Ok(());
+                    }
+                    configured_failure = Some(failure);
+                }
             }
         }
         // Their own node is absent or down, so fall back to public MWEB peers
@@ -205,8 +250,8 @@ impl MwebRuntime {
         let discovered = crate::discovery::discover_mweb_peers(network);
         if discovered.is_empty() {
             self.stale = true;
-            self.last_status = match configured_err {
-                Some(e) => format!("MWEB peer unreachable: {e}"),
+            self.last_status = match configured_failure {
+                Some(failure) => failure.status,
                 None => "no MWEB peers configured, and none found via DNS seeds".into(),
             };
             return Ok(());
@@ -226,7 +271,7 @@ impl MwebRuntime {
             }
             Err(e) => {
                 self.stale = true;
-                self.last_status = format!("MWEB peer unreachable: {e}");
+                self.last_status = classify_pass_failure(&e).status;
                 Ok(())
             }
         }
@@ -299,6 +344,10 @@ impl MwebRuntime {
     }
 
     /// One differential sync attempt against a fixed set of peers.
+    ///
+    /// Returns the typed [`bdk_mweb::Error`] rather than a string: the
+    /// [`BanReason`] behind a failure decides both what the user is told and
+    /// whether we go looking for another peer. See [`classify_pass_failure`].
     #[allow(clippy::too_many_arguments)]
     fn sync_pass(
         &mut self,
@@ -308,7 +357,7 @@ impl MwebRuntime {
         prev_tip_hash: Option<bdk_wallet::bitcoin::BlockHash>,
         network: WalletNetwork,
         progress: Option<Arc<SyncProgress>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), bdk_mweb::Error> {
         let mut pool = PeerPool::new(addrs);
         let syncer = MwebSyncer {
             progress,
@@ -356,7 +405,7 @@ impl MwebRuntime {
                 );
                 Ok(())
             }
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(e),
         }
     }
 
@@ -507,6 +556,62 @@ mod tests {
     use bdk_mweb::MwebCoin;
 
     const TIP: u32 = 200;
+
+    /// A peer that will not serve us is not a peer that is down, and the
+    /// difference decides both what the user reads and whether we hand our
+    /// queries to a stranger.
+    #[test]
+    fn a_rate_limited_peer_is_not_reported_as_unreachable() {
+        let failure = classify_pass_failure(&bdk_mweb::Error::throttled(
+            "peer served none of 7 outstanding getmwebutxos request(s)",
+        ));
+        assert!(
+            !failure.status.contains("unreachable"),
+            "the peer answered; calling it unreachable sends the user \
+             debugging their network: {}",
+            failure.status
+        );
+        assert!(
+            failure.status.contains("-whitelist"),
+            "the status line is the only channel the user has, so it must \
+             name the fix: {}",
+            failure.status
+        );
+    }
+
+    /// With the fallback suppressed, the status line is the sole explanation
+    /// for a balance that stops advancing.
+    #[test]
+    fn a_rate_limited_peer_does_not_send_us_to_public_peers() {
+        let failure = classify_pass_failure(&bdk_mweb::Error::throttled("rate limited"));
+        assert!(
+            !failure.allow_public_fallback,
+            "public peers share the same node-wide bucket and would see \
+             queries our own node keeps private"
+        );
+    }
+
+    /// Everything that is not a throttle keeps the old behavior: a node that
+    /// is genuinely down should not leave MWEB dark.
+    #[test]
+    fn other_peer_failures_still_fall_back_and_read_as_unreachable() {
+        for err in [
+            bdk_mweb::Error::transport("connection reset"),
+            bdk_mweb::Error::bad_proof("leafset root mismatch"),
+            bdk_mweb::Error::protocol("unsorted batch"),
+        ] {
+            let failure = classify_pass_failure(&err);
+            assert!(
+                failure.allow_public_fallback,
+                "{err} should still permit the public-peer fallback"
+            );
+            assert!(
+                failure.status.contains("unreachable"),
+                "{err} should read as unreachable, got {}",
+                failure.status
+            );
+        }
+    }
 
     fn coin(id: u8, height: Option<u32>, leaf_index: Option<u64>) -> MwebCoin {
         MwebCoin {

@@ -50,7 +50,7 @@ Severity: **H**igh / **M**edium / **L**ow / **I**nformational.
 `IndigoNakamoto/bdk` has been through a security pass covering `crates/mweb`
 (the plan and findings are in that repo's `docs/SECURITY_PLAN.md`). This repo
 carries the wallet half of it, and `deps/pins.env` points at that work as
-`BDK_REF=f5c8e7ac…`. The pin cannot move back: the wallet-side code below does
+`BDK_REF=d8e220c2…`. The pin cannot move back: the wallet-side code below does
 not compile against an earlier `bdk`. CI needs that commit pushed to
 `IndigoNakamoto/bdk` before it can resolve the pin.
 
@@ -63,6 +63,7 @@ What the pin move changes for this repo:
 | `MwebCoin` gains `Drop`, redacted `Debug`, constant-time `PartialEq` | No source change needed. Secrets no longer appear in `{:?}` output |
 | `MasterKeys` gains `Drop` and a redacted `Debug` | No source change needed |
 | Peer-facing decode bounds, framing caps, liveness fixes | No source change needed |
+| `BanReason::Throttled`, and a UTXO batch widened to 4096 (F-21) | litecoind 0.21.5.6 meters MWEB serving node-wide and silently drops what it will not serve, which used to look exactly like a dead peer. `crates/wallet-core/src/mweb.rs` now keeps `bdk_mweb::Error` typed as far as `classify_pass_failure`, which stops reporting a metered peer as "unreachable" and, more importantly, stops the fallback to DNS-discovered peers in that case: those share the same limit and would see queries the user's own node keeps private. The sync itself is unchanged — `bdk_mweb` re-issues dropped requests — so a throttle only surfaces here when the peer serves nothing at all |
 
 ### Rollback detection is partial
 
