@@ -378,14 +378,18 @@ impl MwebRuntime {
         let mut notifier = ReadyNotifier { tip_height };
         match pool.with_failover(bdk_net, |peer| {
             self.store.sync_differential(
-                &syncer,
-                &headers,
-                &mut notifier,
+                bdk_wallet::MwebSyncDrivers {
+                    syncer: &syncer,
+                    headers: &headers,
+                    notifier: &mut notifier,
+                    state: &mut self.sync_state,
+                },
                 peer,
-                &mut self.sync_state,
-                &self.keys,
-                &self.book,
-                &self.secp,
+                bdk_wallet::MwebScanContext {
+                    keys: &self.keys,
+                    book: &self.book,
+                    secp: &self.secp,
+                },
             )
         }) {
             Ok(result) => {
@@ -1415,9 +1419,11 @@ pub fn mweb_send(
             runtime.store.db(),
             &runtime.keys,
             dest,
-            Amount::from_sat(req.amount_sats),
-            Amount::from_sat(req.fee_sats),
-            CHANGE_ADDRESS_INDEX,
+            bdk_wallet::MwebSpendParams::new(
+                Amount::from_sat(req.amount_sats),
+                Amount::from_sat(req.fee_sats),
+                CHANGE_ADDRESS_INDEX,
+            ),
             &runtime.secp,
         )
         .map_err(|e| WalletError::Mweb(e.to_string()))?;
@@ -1482,9 +1488,11 @@ pub fn pegout(
             runtime.store.db(),
             &runtime.keys,
             dest.script_pubkey(),
-            Amount::from_sat(req.amount_sats),
-            Amount::from_sat(req.fee_sats),
-            CHANGE_ADDRESS_INDEX,
+            bdk_wallet::MwebSpendParams::new(
+                Amount::from_sat(req.amount_sats),
+                Amount::from_sat(req.fee_sats),
+                CHANGE_ADDRESS_INDEX,
+            ),
             &runtime.secp,
         )
         .map_err(|e| WalletError::Mweb(e.to_string()))?;
