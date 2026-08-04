@@ -16,15 +16,15 @@ mweb = []
 # bdk_chain/bdk_mweb and types stop unifying (the build fails loudly if they
 # drift). For local development against sibling checkouts, add [patch]
 # overrides in .cargo/config.toml (see docs).
-bdk_wallet = { git = "https://github.com/IndigoNakamoto/bdk_wallet.git", rev = "5118184083a2451f49996324f132dfe05c8a8318", default-features = false, features = [
+bdk_wallet = { git = "https://github.com/LitecoinDevKit/bdk_wallet.git", rev = "c0c26dafeea11160f42fce2faf164101191c3912", default-features = false, features = [
     "std",
     "rusqlite",
     "keys-bip39",
     "mweb",
     "mweb-sqlite",
 ] }
-bdk_electrum = { git = "https://github.com/IndigoNakamoto/bdk.git", rev = "312d0d566a264637c9a7ddfb85d7673a8f351a26", default-features = true }
-bdk_mweb = { git = "https://github.com/IndigoNakamoto/bdk.git", rev = "312d0d566a264637c9a7ddfb85d7673a8f351a26", default-features = false, features = [
+bdk_electrum = { git = "https://github.com/LitecoinDevKit/bdk.git", rev = "85eb2a996fbc2569746497b2ad87aff3704f06ca", default-features = true }
+bdk_mweb = { git = "https://github.com/LitecoinDevKit/bdk.git", rev = "85eb2a996fbc2569746497b2ad87aff3704f06ca", default-features = false, features = [
     "std",
     "zkp",
     "persist",
@@ -50,7 +50,7 @@ scrypt = { version = "0.12.0", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
-bdk_wallet = { git = "https://github.com/IndigoNakamoto/bdk_wallet.git", rev = "5118184083a2451f49996324f132dfe05c8a8318", default-features = false, features = [
+bdk_wallet = { git = "https://github.com/LitecoinDevKit/bdk_wallet.git", rev = "c0c26dafeea11160f42fce2faf164101191c3912", default-features = false, features = [
     "std",
     "rusqlite",
     "keys-bip39",

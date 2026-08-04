@@ -2,7 +2,7 @@
 # to a draft GitHub Release. Trigger via Actions → "Release" → Run workflow,
 # or by pushing to the `release` branch.
 #
-# All fork dependencies (IndigoNakamoto/bdk, bdk_wallet, rust-litecoin) are
+# All fork dependencies (LitecoinDevKit/bdk, bdk_wallet, rust-litecoin) are
 # rev-pinned git deps in the manifests with a committed Cargo.lock, so the
 # build is reproducible from this checkout alone. All third-party actions are
 # pinned to commit SHAs.
@@ -114,7 +114,7 @@ jobs:
             **Verify your download** — see [`docs/VERIFYING.md`](https://github.com/${{ github.repository }}/blob/main/docs/VERIFYING.md).
             Each platform attaches a `SHA256SUMS-<platform>.txt` with checksums of its artifacts.
 
-            **Dependency pins** — the IndigoNakamoto/bdk, bdk_wallet, and
+            **Dependency pins** — the LitecoinDevKit/bdk, bdk_wallet, and
             rust-litecoin revs are pinned in the manifests and Cargo.lock at
             the release tag.
           releaseDraft: true
@@ -142,7 +142,7 @@ jobs:
             **Verify your download** — see [`docs/VERIFYING.md`](https://github.com/${{ github.repository }}/blob/main/docs/VERIFYING.md).
             Each platform attaches a `SHA256SUMS-<platform>.txt` with checksums of its artifacts.
 
-            **Dependency pins** — the IndigoNakamoto/bdk, bdk_wallet, and
+            **Dependency pins** — the LitecoinDevKit/bdk, bdk_wallet, and
             rust-litecoin revs are pinned in the manifests and Cargo.lock at
             the release tag.
           releaseDraft: true

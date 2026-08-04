@@ -47,7 +47,7 @@ Severity: **H**igh / **M**edium / **L**ow / **I**nformational.
 
 ## `bdk_mweb` security hardening pass
 
-`IndigoNakamoto/bdk` has been through a security pass covering `crates/mweb`
+`LitecoinDevKit/bdk` has been through a security pass covering `crates/mweb`
 (the plan and findings are in that repo's `docs/SECURITY_PLAN.md`). This repo
 carries the wallet half of it, and the `bdk.git` rev pinned in
 `crates/wallet-core/Cargo.toml` includes that work (it entered at
@@ -90,7 +90,7 @@ blob, which means a v3 secrets format. Tracked as O12 below.
 
 ## Scope notes for a future third-party audit
 
-1. **Treat the sibling forks as primary targets**: `IndigoNakamoto/bdk`
+1. **Treat the sibling forks as primary targets**: `LitecoinDevKit/bdk`
    (`crates/mweb` especially), `bdk_wallet`, `rust-litecoin`,
    `rust-electrum-client`, `rust-miniscript` at the revs pinned in the Cargo
    manifests / `Cargo.lock`. All consensus and MWEB cryptography lives there,

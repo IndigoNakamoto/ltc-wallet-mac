@@ -1,6 +1,6 @@
 # Local development against sibling fork checkouts
 
-The committed manifests pin `IndigoNakamoto/bdk`, `bdk_wallet`, and
+The committed manifests pin `LitecoinDevKit/bdk`, `bdk_wallet`, and
 `rust-litecoin` by git rev, so a plain clone builds standalone and CI/releases
 are reproducible. When hacking on the forks and the wallet together, override
 the pins locally instead of editing the manifests.
@@ -10,20 +10,20 @@ Clone the forks as siblings of this repo:
 ```text
 Dev/
 ├── ltc-wallet-mac/   this repo
-├── bdk/              IndigoNakamoto/bdk        (litecoin)
-├── bdk_wallet/       IndigoNakamoto/bdk_wallet (litecoin)
-└── rust-litecoin/    IndigoNakamoto/rust-litecoin
+├── bdk/              LitecoinDevKit/bdk        (litecoin)
+├── bdk_wallet/       LitecoinDevKit/bdk_wallet (litecoin)
+└── rust-litecoin/    LitecoinDevKit/rust-litecoin
 ```
 
 Then add a gitignored `.cargo/config.toml` at this repo's root:
 
 ```toml
-[patch."https://github.com/IndigoNakamoto/bdk.git"]
+[patch."https://github.com/LitecoinDevKit/bdk.git"]
 bdk_chain = { path = "../bdk/crates/chain" }
 bdk_mweb = { path = "../bdk/crates/mweb" }
 bdk_electrum = { path = "../bdk/crates/electrum" }
 
-[patch."https://github.com/IndigoNakamoto/bdk_wallet.git"]
+[patch."https://github.com/LitecoinDevKit/bdk_wallet.git"]
 bdk_wallet = { path = "../bdk_wallet" }
 ```
 

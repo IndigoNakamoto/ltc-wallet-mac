@@ -1,7 +1,7 @@
 # Architecture — Litecoin Mac wallet
 
 Status: blueprint for v0.1 (transparent) and v0.2 (MWEB).  
-Derived from planning against the Litecoin BDK fork (`IndigoNakamoto/bdk` + `bdk_wallet`).
+Derived from planning against the Litecoin BDK fork (`LitecoinDevKit/bdk` + `bdk_wallet`).
 
 ## Why this shape
 

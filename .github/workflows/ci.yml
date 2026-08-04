@@ -1,6 +1,6 @@
 # Build, test, lint, and supply-chain checks on every PR and push to main.
 #
-# All fork dependencies (IndigoNakamoto/bdk, bdk_wallet, rust-litecoin) are
+# All fork dependencies (LitecoinDevKit/bdk, bdk_wallet, rust-litecoin) are
 # rev-pinned git deps in the manifests with a committed Cargo.lock, so a plain
 # checkout builds standalone. If the bdk rev pinned here ever diverges from
 # the one bdk_wallet pins, Cargo builds two copies of bdk_chain/bdk_mweb and

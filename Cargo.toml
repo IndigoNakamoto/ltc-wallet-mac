@@ -10,4 +10,4 @@ license = "MIT OR Apache-2.0"
 # Until crates.io publishes litecoin 0.32.8-rc.2 (native PSBTv2 MWEB maps).
 # Must stay on the same rev the bdk fork pins, so litecoin types unify.
 [patch.crates-io]
-litecoin = { git = "https://github.com/IndigoNakamoto/rust-litecoin.git", rev = "0b3285337f3cc508a5549d245ce20d3b52418f3a" }
+litecoin = { git = "https://github.com/LitecoinDevKit/rust-litecoin.git", rev = "0b3285337f3cc508a5549d245ce20d3b52418f3a" }

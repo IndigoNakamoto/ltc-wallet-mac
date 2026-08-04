@@ -51,9 +51,9 @@ unknown-registry = "deny"
 unknown-git = "deny"
 # Litecoin fork repos, all pinned by rev in the manifests and Cargo.lock.
 allow-git = [
-  "https://github.com/IndigoNakamoto/bdk",
-  "https://github.com/IndigoNakamoto/bdk_wallet",
-  "https://github.com/IndigoNakamoto/rust-electrum-client",
-  "https://github.com/IndigoNakamoto/rust-litecoin",
-  "https://github.com/IndigoNakamoto/rust-miniscript",
+  "https://github.com/LitecoinDevKit/bdk",
+  "https://github.com/LitecoinDevKit/bdk_wallet",
+  "https://github.com/LitecoinDevKit/rust-electrum-client",
+  "https://github.com/LitecoinDevKit/rust-litecoin",
+  "https://github.com/LitecoinDevKit/rust-miniscript",
 ]

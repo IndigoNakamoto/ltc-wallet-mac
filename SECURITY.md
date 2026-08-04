@@ -7,7 +7,7 @@ source code, see [`docs/VERIFYING.md`](docs/VERIFYING.md).
 ## Reporting a vulnerability
 
 Report security issues privately via
-[GitHub Security Advisories](https://github.com/IndigoNakamoto/ltc-wallet-mac/security/advisories/new)
+[GitHub Security Advisories](https://github.com/LitecoinDevKit/ltc-wallet-mac/security/advisories/new)
 ("Report a vulnerability"). Please do not open public issues for bugs that
 could put user funds at risk. You should receive an initial response within
 7 days.
@@ -67,8 +67,8 @@ servers, and social engineering.
 Beyond this repository, the wallet's correctness depends on the pinned fork
 dependencies (rev-pinned in the Cargo manifests and `Cargo.lock`):
 
-- [`IndigoNakamoto/bdk`](https://github.com/IndigoNakamoto/bdk) (+ `bdk_wallet`) — wallet logic, MWEB crypto
-- [`IndigoNakamoto/rust-litecoin`](https://github.com/IndigoNakamoto/rust-litecoin) — consensus types and serialization
+- [`LitecoinDevKit/bdk`](https://github.com/LitecoinDevKit/bdk) (+ `bdk_wallet`) — wallet logic, MWEB crypto
+- [`LitecoinDevKit/rust-litecoin`](https://github.com/LitecoinDevKit/rust-litecoin) — consensus types and serialization
 - upstream crates locked in `Cargo.lock` (audited in CI by `cargo audit` / `cargo deny`)
 
 An external audit should treat those forks as first-class audit targets, not
@@ -104,7 +104,7 @@ the revs pinned in the manifests and `Cargo.lock`. Additionally:
 - **Build provenance attestations**: every artifact digest is attested by
   GitHub's build provenance service, linking it to the exact commit and
   workflow run. Verify with `gh attestation verify <file> --repo
-  IndigoNakamoto/ltc-wallet-mac`.
+  LitecoinDevKit/ltc-wallet-mac`.
 - **Minisign signatures** (once the signing key is published): each
   `SHA256SUMS` file is signed with an offline-verifiable minisign key, so
   verification does not depend on GitHub's infrastructure.

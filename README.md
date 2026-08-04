@@ -1,6 +1,6 @@
 # ltc-wallet-mac
 
-Native Litecoin wallet for macOS and Linux, built on the Litecoin BDK fork ([`IndigoNakamoto/bdk`](https://github.com/IndigoNakamoto/bdk) + [`bdk_wallet`](https://github.com/IndigoNakamoto/bdk_wallet)), with a Tauri 2 shell.
+Native Litecoin wallet for macOS and Linux, built on the Litecoin BDK fork ([`LitecoinDevKit/bdk`](https://github.com/LitecoinDevKit/bdk) + [`bdk_wallet`](https://github.com/LitecoinDevKit/bdk_wallet)), with a Tauri 2 shell.
 
 ## Status
 
@@ -21,7 +21,7 @@ how to verify a release in [`docs/VERIFYING.md`](docs/VERIFYING.md).
 ../rust-litecoin    # litecoin 0.32.8-rc.2 (workspace [patch])
 ```
 
-The IndigoNakamoto/bdk, bdk_wallet, and rust-litecoin forks are pinned by rev directly in the Cargo manifests (see `crates/wallet-core/Cargo.toml` and the root `[patch.crates-io]`), backed by the committed `Cargo.lock`. Update those revs when intentionally bumping the forks; for day-to-day development against local sibling checkouts, add `[patch]` overrides in `.cargo/config.toml` (see `docs/LOCAL_DEV.md`).
+The LitecoinDevKit/bdk, bdk_wallet, and rust-litecoin forks are pinned by rev directly in the Cargo manifests (see `crates/wallet-core/Cargo.toml` and the root `[patch.crates-io]`), backed by the committed `Cargo.lock`. Update those revs when intentionally bumping the forks; for day-to-day development against local sibling checkouts, add `[patch]` overrides in `.cargo/config.toml` (see `docs/LOCAL_DEV.md`).
 
 ## Layout
 

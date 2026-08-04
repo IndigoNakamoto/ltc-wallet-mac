@@ -21,7 +21,7 @@
 #       automatically an indictment; a match is strong evidence.
 set -euo pipefail
 
-REPO_URL="https://github.com/IndigoNakamoto/ltc-wallet-mac"
+REPO_URL="https://github.com/LitecoinDevKit/ltc-wallet-mac"
 
 usage() {
   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'

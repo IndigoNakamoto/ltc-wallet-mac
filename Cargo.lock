@@ -417,7 +417,7 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 [[package]]
 name = "bdk_chain"
 version = "0.23.2"
-source = "git+https://github.com/IndigoNakamoto/bdk.git?rev=312d0d566a264637c9a7ddfb85d7673a8f351a26#312d0d566a264637c9a7ddfb85d7673a8f351a26"
+source = "git+https://github.com/LitecoinDevKit/bdk.git?rev=85eb2a996fbc2569746497b2ad87aff3704f06ca#85eb2a996fbc2569746497b2ad87aff3704f06ca"
 dependencies = [
  "bdk_core",
  "litecoin",
@@ -429,7 +429,7 @@ dependencies = [
 [[package]]
 name = "bdk_core"
 version = "0.6.2"
-source = "git+https://github.com/IndigoNakamoto/bdk.git?rev=312d0d566a264637c9a7ddfb85d7673a8f351a26#312d0d566a264637c9a7ddfb85d7673a8f351a26"
+source = "git+https://github.com/LitecoinDevKit/bdk.git?rev=85eb2a996fbc2569746497b2ad87aff3704f06ca#85eb2a996fbc2569746497b2ad87aff3704f06ca"
 dependencies = [
  "hashbrown 0.14.5",
  "litecoin",
@@ -439,7 +439,7 @@ dependencies = [
 [[package]]
 name = "bdk_electrum"
 version = "0.23.2"
-source = "git+https://github.com/IndigoNakamoto/bdk.git?rev=312d0d566a264637c9a7ddfb85d7673a8f351a26#312d0d566a264637c9a7ddfb85d7673a8f351a26"
+source = "git+https://github.com/LitecoinDevKit/bdk.git?rev=85eb2a996fbc2569746497b2ad87aff3704f06ca#85eb2a996fbc2569746497b2ad87aff3704f06ca"
 dependencies = [
  "bdk_core",
  "electrum-client",
@@ -448,7 +448,7 @@ dependencies = [
 [[package]]
 name = "bdk_mweb"
 version = "0.1.0"
-source = "git+https://github.com/IndigoNakamoto/bdk.git?rev=312d0d566a264637c9a7ddfb85d7673a8f351a26#312d0d566a264637c9a7ddfb85d7673a8f351a26"
+source = "git+https://github.com/LitecoinDevKit/bdk.git?rev=85eb2a996fbc2569746497b2ad87aff3704f06ca#85eb2a996fbc2569746497b2ad87aff3704f06ca"
 dependencies = [
  "bdk_core",
  "blake3",
@@ -466,7 +466,7 @@ dependencies = [
 [[package]]
 name = "bdk_wallet"
 version = "3.1.0-litecoin.0"
-source = "git+https://github.com/IndigoNakamoto/bdk_wallet.git?rev=5118184083a2451f49996324f132dfe05c8a8318#5118184083a2451f49996324f132dfe05c8a8318"
+source = "git+https://github.com/LitecoinDevKit/bdk_wallet.git?rev=c0c26dafeea11160f42fce2faf164101191c3912#c0c26dafeea11160f42fce2faf164101191c3912"
 dependencies = [
  "anyhow",
  "bdk_chain",
@@ -1242,7 +1242,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1375,7 +1375,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 [[package]]
 name = "electrum-client"
 version = "0.24.1"
-source = "git+https://github.com/IndigoNakamoto/rust-electrum-client?rev=b6b6ee44eca962032ddc4d3e93b896e693d8439f#b6b6ee44eca962032ddc4d3e93b896e693d8439f"
+source = "git+https://github.com/LitecoinDevKit/rust-electrum-client?rev=b6b6ee44eca962032ddc4d3e93b896e693d8439f#b6b6ee44eca962032ddc4d3e93b896e693d8439f"
 dependencies = [
  "byteorder",
  "libc",
@@ -1459,7 +1459,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2584,7 +2584,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 [[package]]
 name = "litecoin"
 version = "0.32.8-rc.2"
-source = "git+https://github.com/IndigoNakamoto/rust-litecoin.git?rev=0b3285337f3cc508a5549d245ce20d3b52418f3a#0b3285337f3cc508a5549d245ce20d3b52418f3a"
+source = "git+https://github.com/LitecoinDevKit/rust-litecoin.git?rev=0b3285337f3cc508a5549d245ce20d3b52418f3a#0b3285337f3cc508a5549d245ce20d3b52418f3a"
 dependencies = [
  "base58ck",
  "base64 0.21.7",
@@ -2677,7 +2677,7 @@ checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 [[package]]
 name = "miniscript"
 version = "12.3.7"
-source = "git+https://github.com/IndigoNakamoto/rust-miniscript?rev=e3187272617adad69f5b9ece62d25ea28b70fd25#e3187272617adad69f5b9ece62d25ea28b70fd25"
+source = "git+https://github.com/LitecoinDevKit/rust-miniscript?rev=e3187272617adad69f5b9ece62d25ea28b70fd25#e3187272617adad69f5b9ece62d25ea28b70fd25"
 dependencies = [
  "bech32",
  "litecoin",
@@ -3665,7 +3665,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4528,10 +4528,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5445,7 +5445,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

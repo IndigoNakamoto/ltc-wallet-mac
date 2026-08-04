@@ -10,7 +10,7 @@ Paste or `@`-reference this file when starting a new Cursor chat in this repo.
 - **Sync backend (transparent):** Electrum-LTC first.
 - **MWEB sync:** LIP-0006 P2P to archive litecoind (not Electrum). Pure MWEB broadcast requires litecoind RPC; track **wtxid**.
 - **Library deps:** Path-dep sibling checkouts:
-  - `../bdk` (`IndigoNakamoto/bdk`, branch `litecoin`)
+  - `../bdk` (`LitecoinDevKit/bdk`, branch `litecoin`)
   - nested `../bdk/bdk_wallet`
   - `../rust-litecoin` via workspace `[patch]`
 - **Alias rule:** Cargo `bitcoin` → `litecoin` crate.
