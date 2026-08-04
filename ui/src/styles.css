@@ -1170,6 +1170,204 @@ textarea {
   text-align: right;
 }
 
+.mnemonic-quiz {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin: 1rem 0;
+}
+
+.mnemonic-quiz-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.mnemonic-quiz-slot {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  width: 100%;
+}
+
+.mnemonic-quiz-slot.is-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.mnemonic-quiz-slot-index {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 4.5rem;
+}
+
+.mnemonic-quiz-slot-value {
+  flex: 1 1 auto;
+  min-height: 1.2em;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+}
+
+.mnemonic-quiz-slot-value.is-empty {
+  color: var(--text-3);
+}
+
+.mnemonic-quiz-bank {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-height: 2.4rem;
+}
+
+.mnemonic-quiz-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.mnemonic-quiz-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.mnemonic-quiz-chip:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ---------------------------------------------------------------------------
+   Passphrase strength
+   --------------------------------------------------------------------------- */
+
+.pass-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.35rem 0 0.15rem;
+}
+
+.pass-meter-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.pass-meter-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 999px;
+  transition: width 0.2s var(--ease), background 0.2s var(--ease);
+  background: var(--danger);
+}
+
+.pass-meter-fill[data-level="1"] {
+  width: 33%;
+  background: var(--danger);
+}
+
+.pass-meter-fill[data-level="2"] {
+  width: 66%;
+  background: var(--warning);
+}
+
+.pass-meter-fill[data-level="3"] {
+  width: 100%;
+  background: var(--accent);
+}
+
+.pass-meter-label {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Balance banner
+   --------------------------------------------------------------------------- */
+
+.banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin: 0 1.25rem 0.85rem;
+  padding: 0.75rem 0.95rem;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+}
+
+.banner p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 0.88rem;
+  max-width: 52ch;
+}
+
+.confirm-warning {
+  margin: 0.35rem 0 0.75rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--warning) 50%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warning) 14%, var(--surface));
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.confirm-destination {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0.5rem 0 0.85rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.confirm-destination-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.addr-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.confirm-destination-address {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  word-break: break-all;
+  user-select: all;
+  line-height: 1.4;
+}
+
 /* ---------------------------------------------------------------------------
    Progress
    --------------------------------------------------------------------------- */

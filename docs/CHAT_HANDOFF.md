@@ -47,7 +47,12 @@ Peg-in is a **self-transfer** from the wallet’s own transparent UTXOs. Exchang
 
 ## Screens
 
-Boot → Unlock | Migrate | Onboarding → Mnemonic backup → Home (balance, QR, send, history, MWEB, settings).
+Boot → Unlock | Migrate | Onboarding → Mnemonic backup → verify quiz → Home (balance, QR, send, history, MWEB, settings).
+
+## UX backlog ([`docs/UX_REVIEW.md`](UX_REVIEW.md))
+
+- **Done (P0):** Hard-gated recovery-phrase quiz after create; wallet passphrase minimum 8 chars + strength meter on Create/Migrate/Restore; first-funds backup banner for unverified/legacy installs; send/swap review shows full destination, type badge, total leaving wallet, and high-fee warning (≥50% of amount).
+- **Next (P1):** Public/Private first-use coach, empty-wallet funding CTA, peg-in maturity as first-class state, Swap dual-fee / MWEB “no explorer” success copy, progressive security checklist.
 
 ## Implementation status
 
@@ -57,6 +62,7 @@ Boot → Unlock | Migrate | Onboarding → Mnemonic backup → Home (balance, QR
 4. ~~Packaging prep: icon, bundle metadata, entitlements, release docs~~
 5. ~~MWEB store + tip seam + peg-in/send/pegout commands + UI~~
 6. Live MWEB E2E against archive peer + RPC; notarized ship
+7. UX P0 fund-loss safety (backup verify, passphrase gate, send confirm)
 
 ## Litview / LRK
 

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 
 use bdk_mweb::mweb_sync::SyncProgress;
 
@@ -116,6 +116,9 @@ pub struct WalletApp {
     /// polled while a sync (which holds that mutex) is in flight.
     mweb_progress: Arc<SyncProgress>,
     mweb_sync_active: AtomicBool,
+    /// Set when [`Self::lock`] cannot take the state mutex (e.g. sync in flight).
+    /// The holder must drop in-memory wallet state before returning.
+    pending_lock: AtomicBool,
 }
 
 impl WalletApp {
@@ -129,6 +132,7 @@ impl WalletApp {
             )),
             mweb_progress: Arc::new(SyncProgress::default()),
             mweb_sync_active: AtomicBool::new(false),
+            pending_lock: AtomicBool::new(false),
         }
     }
 
@@ -177,11 +181,42 @@ impl WalletApp {
         self.secrets.unlock(&req.passphrase)
     }
 
+    /// Lock immediately: wipe the decrypted mnemonic, then drop in-memory wallet
+    /// state if the state mutex is free. When sync (or another long op) holds the
+    /// mutex, set [`Self::pending_lock`] so that holder discards state before return.
+    ///
+    /// Does **not** block on an in-flight sync.
     pub fn lock(&self) {
-        if let Ok(mut guard) = self.state.lock() {
-            *guard = None;
-        }
         self.secrets.lock();
+        self.pending_lock.store(true, Ordering::Release);
+        match self.state.try_lock() {
+            Ok(mut guard) => {
+                *guard = None;
+                self.pending_lock.store(false, Ordering::Release);
+            }
+            Err(TryLockError::WouldBlock) => {
+                // Sync/send holds the state; secrets are already cleared.
+            }
+            Err(TryLockError::Poisoned(poisoned)) => {
+                let mut guard = poisoned.into_inner();
+                *guard = None;
+                self.pending_lock.store(false, Ordering::Release);
+            }
+        }
+    }
+
+    /// If the user locked while we held `guard`, drop wallet state and report locked.
+    fn abort_if_locked(
+        &self,
+        guard: &mut MutexGuard<'_, Option<WalletState>>,
+    ) -> Result<(), WalletError> {
+        if !self.pending_lock.load(Ordering::Acquire) && !self.secrets.is_locked() {
+            return Ok(());
+        }
+        **guard = None;
+        self.secrets.lock();
+        self.pending_lock.store(false, Ordering::Release);
+        Err(WalletError::Locked)
     }
 
     pub fn migrate_encrypt(&self, req: MigrateEncryptRequest) -> Result<(), WalletError> {
@@ -502,6 +537,7 @@ impl WalletApp {
     pub fn sync(&self) -> Result<SyncResult, WalletError> {
         self.ensure_unlocked()?;
         let mut guard = self.lock_state()?;
+        self.abort_if_locked(&mut guard)?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
 
         let electrum_started = std::time::Instant::now();
@@ -578,6 +614,10 @@ impl WalletApp {
             }
         }
 
+        // Skip the long MWEB pass if the user locked during Electrum sync.
+        self.abort_if_locked(&mut guard)?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+
         // MWEB sync (best-effort; peer failure → stale, not hard error).
         let mut mweb_ms = 0u64;
         if let Some(ref mut mweb) = state.mweb {
@@ -611,6 +651,9 @@ impl WalletApp {
             mweb_ms = mweb_started.elapsed().as_millis() as u64;
         }
 
+        self.abort_if_locked(&mut guard)?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+
         // Repair peg-ins that credited MWEB without spending transparent UTXOs
         // (bug in earlier builds). Prefer Electrum raw tx; fall back to RPC.
         if state.mweb.is_some() {
@@ -624,6 +667,7 @@ impl WalletApp {
         let tx_count_after = state.wallet.transactions().count();
         let new_txs = tx_count_after.saturating_sub(tx_count_before) as u32;
         let summary = build_summary(state)?;
+        self.abort_if_locked(&mut guard)?;
         Ok(SyncResult {
             summary,
             new_txs,
@@ -648,6 +692,7 @@ impl WalletApp {
     fn resync_mweb_inner(&self, new_scheme: Option<MwebScheme>) -> Result<(), WalletError> {
         self.ensure_unlocked()?;
         let mut guard = self.lock_state()?;
+        self.abort_if_locked(&mut guard)?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
         mweb::wipe_mweb_files(&state.data_dir)?;
         // A manual resync usually means something looked wrong, so re-crawl
@@ -683,6 +728,8 @@ impl WalletApp {
             });
             mweb.persist(&state.data_dir)?;
         }
+        self.abort_if_locked(&mut guard)?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
         state.needs_mweb_scan = false;
         Ok(())
     }

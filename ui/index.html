@@ -81,6 +81,16 @@
               <input id="migrate-passphrase2" type="password" autocomplete="new-password" />
             </label>
           </div>
+          <div class="pass-meter" id="migrate-pass-meter" hidden>
+            <div class="pass-meter-track" aria-hidden="true">
+              <div class="pass-meter-fill" id="migrate-pass-fill"></div>
+            </div>
+            <p class="hint pass-meter-label" id="migrate-pass-label"></p>
+          </div>
+          <p class="hint">
+            This passphrase unlocks the wallet on this Mac. It is not your recovery phrase. If you
+            forget it, you must reset and restore from your written backup.
+          </p>
           <div class="row">
             <button type="button" id="btn-migrate" class="btn btn-primary">Encrypt and continue</button>
           </div>
@@ -102,6 +112,16 @@
                 <input id="onboard-passphrase2" type="password" autocomplete="new-password" />
               </label>
             </div>
+            <div class="pass-meter" id="onboard-pass-meter" hidden>
+              <div class="pass-meter-track" aria-hidden="true">
+                <div class="pass-meter-fill" id="onboard-pass-fill"></div>
+              </div>
+              <p class="hint pass-meter-label" id="onboard-pass-label"></p>
+            </div>
+            <p class="hint">
+              This passphrase unlocks the wallet on this Mac. It is not your recovery phrase. If you
+              forget it, you must reset and restore from your written backup.
+            </p>
             <div class="row">
               <button type="button" id="btn-create" class="btn btn-primary">Create wallet</button>
             </div>
@@ -144,17 +164,23 @@
             </label>
             <div class="field-grid">
               <label class="field">
-                <span class="field-label">Passphrase</span>
+                <span class="field-label">Wallet passphrase</span>
                 <input id="restore-passphrase" type="password" autocomplete="new-password" />
               </label>
               <label class="field">
-                <span class="field-label">Confirm passphrase</span>
+                <span class="field-label">Confirm wallet passphrase</span>
                 <input id="restore-passphrase2" type="password" autocomplete="new-password" />
               </label>
             </div>
+            <div class="pass-meter" id="restore-pass-meter" hidden>
+              <div class="pass-meter-track" aria-hidden="true">
+                <div class="pass-meter-fill" id="restore-pass-fill"></div>
+              </div>
+              <p class="hint pass-meter-label" id="restore-pass-label"></p>
+            </div>
             <p class="hint">
-              The passphrase encrypts the restored secret on this machine. It is new — not the
-              seed's own passphrase.
+              The wallet passphrase encrypts the restored secret on this Mac. It is new — not the
+              aezeed seed passphrase above, and not your recovery words.
             </p>
             <div class="row">
               <button type="button" id="btn-restore" class="btn btn-secondary">Restore wallet</button>
@@ -163,11 +189,34 @@
         </section>
 
         <section id="mnemonic" class="card" hidden>
-          <h2>Back up your recovery phrase</h2>
-          <p class="lede">Write these words down in order. They are shown once and cannot be recovered.</p>
-          <div id="mnemonic-text" class="mnemonic-grid"></div>
-          <div class="row">
-            <button type="button" id="btn-mnemonic-done" class="btn btn-primary">I saved it</button>
+          <div id="mnemonic-show">
+            <h2>Back up your recovery phrase</h2>
+            <p class="lede">
+              Write these words down in order on paper. They are shown once. Anyone with this phrase
+              can spend your funds — do not screenshot or store it in cloud notes.
+            </p>
+            <div id="mnemonic-text" class="mnemonic-grid"></div>
+            <div class="row">
+              <button type="button" id="btn-mnemonic-to-verify" class="btn btn-primary">
+                Continue
+              </button>
+            </div>
+          </div>
+          <div id="mnemonic-verify" hidden>
+            <h2>Confirm your backup</h2>
+            <p class="lede">
+              Tap each word from the list into the matching numbered slot from your written phrase.
+            </p>
+            <div id="mnemonic-quiz" class="mnemonic-quiz"></div>
+            <p class="error" id="mnemonic-quiz-error" hidden></p>
+            <div class="row">
+              <button type="button" id="btn-mnemonic-show-again" class="btn btn-ghost">
+                Show phrase again
+              </button>
+              <button type="button" id="btn-mnemonic-done" class="btn btn-primary" disabled>
+                Continue
+              </button>
+            </div>
           </div>
         </section>
       </div>
@@ -309,6 +358,14 @@
           <!-- Balance: Nexus composition — balance on the gradient, glass tab pills,
                then a light sheet holding the transaction list or the active card. -->
           <section id="view-balance" class="view view-balance" role="tabpanel" aria-labelledby="nav-balance">
+            <div class="banner" id="backup-banner" hidden>
+              <p>
+                Confirm your paper backup still matches — you cannot recover funds without it.
+              </p>
+              <button type="button" id="btn-backup-banner-dismiss" class="btn btn-ghost btn-sm">
+                Dismiss
+              </button>
+            </div>
             <div class="hero">
               <div class="hero-inner">
                 <span class="hero-label">Total balance</span>

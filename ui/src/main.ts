@@ -194,11 +194,17 @@ type ThemePref = "auto" | "light" | "dark";
 
 const THEME_KEY = "ltc-theme";
 const THEME_ORDER: ThemePref[] = ["auto", "light", "dark"];
+const BACKUP_VERIFIED_KEY = "ltc-backup-verified";
+const BACKUP_BANNER_DISMISSED_KEY = "ltc-backup-banner-dismissed";
 
 const DUST_LITOSHIS = 2940;
 const AUTO_SYNC_MS = 60_000;
 const QR_CSS_SIZE = 176;
 const RECENT_TX_COUNT = 6;
+const MIN_PASSPHRASE_LEN = 8;
+const QUIZ_WORD_COUNT = 3;
+/** Warn when network fee is at least half the amount being sent. */
+const HIGH_FEE_RATIO = 0.5;
 
 const SVG_ARROW_IN =
   '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v13"/><path d="m6 13 6 6 6-6"/></svg>';
@@ -214,8 +220,14 @@ const el = {
   migrate: document.querySelector<HTMLElement>("#migrate")!,
   onboarding: document.querySelector<HTMLElement>("#onboarding")!,
   mnemonic: document.querySelector<HTMLElement>("#mnemonic")!,
+  mnemonicShow: document.querySelector<HTMLElement>("#mnemonic-show")!,
+  mnemonicVerify: document.querySelector<HTMLElement>("#mnemonic-verify")!,
+  mnemonicQuiz: document.querySelector<HTMLElement>("#mnemonic-quiz")!,
+  mnemonicQuizError: document.querySelector<HTMLElement>("#mnemonic-quiz-error")!,
   ready: document.querySelector<HTMLElement>("#ready")!,
   mnemonicText: document.querySelector<HTMLElement>("#mnemonic-text")!,
+  backupBanner: document.querySelector<HTMLElement>("#backup-banner")!,
+  btnBackupBannerDismiss: document.querySelector<HTMLButtonElement>("#btn-backup-banner-dismiss")!,
   viewTitle: document.querySelector<HTMLElement>("#view-title")!,
   networkBadge: document.querySelector<HTMLElement>("#network-badge")!,
   syncDot: document.querySelector<HTMLElement>("#sync-dot")!,
@@ -285,11 +297,20 @@ const el = {
   restoreAezeedPass: document.querySelector<HTMLInputElement>("#restore-aezeed-pass")!,
   restorePassphrase: document.querySelector<HTMLInputElement>("#restore-passphrase")!,
   restorePassphrase2: document.querySelector<HTMLInputElement>("#restore-passphrase2")!,
+  restorePassMeter: document.querySelector<HTMLElement>("#restore-pass-meter")!,
+  restorePassFill: document.querySelector<HTMLElement>("#restore-pass-fill")!,
+  restorePassLabel: document.querySelector<HTMLElement>("#restore-pass-label")!,
   onboardPassphrase: document.querySelector<HTMLInputElement>("#onboard-passphrase")!,
   onboardPassphrase2: document.querySelector<HTMLInputElement>("#onboard-passphrase2")!,
+  onboardPassMeter: document.querySelector<HTMLElement>("#onboard-pass-meter")!,
+  onboardPassFill: document.querySelector<HTMLElement>("#onboard-pass-fill")!,
+  onboardPassLabel: document.querySelector<HTMLElement>("#onboard-pass-label")!,
   unlockPassphrase: document.querySelector<HTMLInputElement>("#unlock-passphrase")!,
   migratePassphrase: document.querySelector<HTMLInputElement>("#migrate-passphrase")!,
   migratePassphrase2: document.querySelector<HTMLInputElement>("#migrate-passphrase2")!,
+  migratePassMeter: document.querySelector<HTMLElement>("#migrate-pass-meter")!,
+  migratePassFill: document.querySelector<HTMLElement>("#migrate-pass-fill")!,
+  migratePassLabel: document.querySelector<HTMLElement>("#migrate-pass-label")!,
   sendForm: document.querySelector<HTMLFormElement>("#send-form")!,
   sendAddress: document.querySelector<HTMLInputElement>("#send-address")!,
   sendAmount: document.querySelector<HTMLInputElement>("#send-amount")!,
@@ -317,6 +338,8 @@ const el = {
   pegoutDrain: document.querySelector<HTMLInputElement>("#pegout-drain")!,
   btnCreate: document.querySelector<HTMLButtonElement>("#btn-create")!,
   btnRestore: document.querySelector<HTMLButtonElement>("#btn-restore")!,
+  btnMnemonicToVerify: document.querySelector<HTMLButtonElement>("#btn-mnemonic-to-verify")!,
+  btnMnemonicShowAgain: document.querySelector<HTMLButtonElement>("#btn-mnemonic-show-again")!,
   btnMnemonicDone: document.querySelector<HTMLButtonElement>("#btn-mnemonic-done")!,
   btnSync: document.querySelector<HTMLButtonElement>("#btn-sync")!,
   btnAddress: document.querySelector<HTMLButtonElement>("#btn-address")!,
@@ -372,6 +395,14 @@ let useExplorerFeeHints = true;
 let spotPriceUsd: number | null = null;
 let lastTotalSats = 0;
 let selectedFeeRateSatVb: number | null = null;
+/** In-session mnemonic for create → verify; cleared after quiz success. */
+let pendingMnemonic: string | null = null;
+/** Mnemonic indexes shown as numbered slots (phrase order). */
+let quizPositions: number[] = [];
+/** Chosen bank index per quiz slot (`quizPositions` parallel), or null if empty. */
+let quizAnswers: Array<number | null> = [];
+/** Which slot receives the next bank tap. */
+let quizActiveSlot = 0;
 const txEnrichmentCache = new Map<string, TxEnrichment>();
 
 function isChainTxid(id: string): boolean {
@@ -550,6 +581,8 @@ function setPhase(next: Phase) {
   el.ready.hidden = next !== "ready";
   if (next === "ready") startAutoSync();
   else stopAutoSync();
+  if (next !== "mnemonic") showMnemonicStep("show");
+  updateBackupBanner();
 }
 
 function updateTitle() {
@@ -869,11 +902,47 @@ function appendParagraph(host: HTMLElement, text: string, className: string) {
   host.appendChild(p);
 }
 
+function addressNetworkBadge(address: string): string {
+  const a = address.trim().toLowerCase();
+  if (a.startsWith("ltcmweb1") || a.startsWith("tmweb1")) return "Private · ltcmweb1";
+  if (a.startsWith("ltc1") || a.startsWith("tltc1")) return "Public · ltc1";
+  return "Address";
+}
+
+function isHighFee(feeSats: number, amountSats: number): boolean {
+  return amountSats > 0 && feeSats >= amountSats * HIGH_FEE_RATIO;
+}
+
+function appendConfirmDestination(host: HTMLElement, address: string, badge: string) {
+  const box = document.createElement("div");
+  box.className = "confirm-destination";
+  const head = document.createElement("div");
+  head.className = "confirm-destination-head";
+  const badgeEl = document.createElement("span");
+  badgeEl.className = "addr-badge";
+  badgeEl.textContent = badge;
+  const copyBtn = document.createElement("button");
+  copyBtn.type = "button";
+  copyBtn.className = "btn btn-ghost btn-sm";
+  copyBtn.textContent = "Copy";
+  copyBtn.addEventListener("click", () => {
+    void copyText(address, "Address copied.");
+  });
+  head.append(badgeEl, copyBtn);
+  const addr = document.createElement("div");
+  addr.className = "confirm-destination-address";
+  addr.textContent = address;
+  box.append(head, addr);
+  host.appendChild(box);
+}
+
 async function openConfirm(opts: {
   title: string;
   message: string;
   rows?: DetailRow[];
   detail?: string;
+  warning?: string;
+  destination?: string;
   confirmLabel?: string;
   danger?: boolean;
 }): Promise<boolean> {
@@ -881,6 +950,14 @@ async function openConfirm(opts: {
     title: opts.title,
     build: (body) => {
       appendParagraph(body, opts.message, "lede");
+      if (opts.destination) {
+        appendConfirmDestination(
+          body,
+          opts.destination,
+          addressNetworkBadge(opts.destination),
+        );
+      }
+      if (opts.warning) appendParagraph(body, opts.warning, "confirm-warning");
       if (opts.rows?.length) body.appendChild(buildDetailList(opts.rows));
       if (opts.detail) appendParagraph(body, opts.detail, "hint");
     },
@@ -1077,9 +1154,16 @@ function updateBusyUi() {
   // A filled restore field means the user intends to restore; block Create so
   // the primary button can't silently generate a fresh wallet instead.
   const restorePending = el.restoreMnemonic.value.trim().length > 0;
-  el.btnCreate.disabled = busy || restorePending;
+  const createPassOk =
+    requireWalletPassphrase(el.onboardPassphrase.value, el.onboardPassphrase2.value) == null;
+  const restorePassOk =
+    requireWalletPassphrase(el.restorePassphrase.value, el.restorePassphrase2.value) == null;
+  const migratePassOk =
+    requireWalletPassphrase(el.migratePassphrase.value, el.migratePassphrase2.value) == null;
+  el.btnCreate.disabled = busy || restorePending || !createPassOk;
   el.createRestoreHint.hidden = !restorePending;
-  el.btnRestore.disabled = busy;
+  el.btnRestore.disabled = busy || !restorePassOk || !el.restoreMnemonic.value.trim();
+  el.btnMigrate.disabled = busy || !migratePassOk;
   el.sendAddress.disabled = busy;
   el.sendAmount.disabled = busy || drain;
   el.peginAmount.disabled = busy || el.peginDrain.checked;
@@ -1144,9 +1228,13 @@ async function renderQr(canvas: HTMLCanvasElement, address: string) {
   }
 }
 
+function splitMnemonicWords(mnemonic: string): string[] {
+  return mnemonic.trim().split(/\s+/).filter(Boolean);
+}
+
 function renderMnemonic(mnemonic: string) {
   el.mnemonicText.textContent = "";
-  const words = mnemonic.trim().split(/\s+/).filter(Boolean);
+  const words = splitMnemonicWords(mnemonic);
   words.forEach((word, i) => {
     const chip = document.createElement("div");
     chip.className = "mnemonic-word";
@@ -1158,6 +1246,213 @@ function renderMnemonic(mnemonic: string) {
     chip.append(index, text);
     el.mnemonicText.appendChild(chip);
   });
+}
+
+function showMnemonicStep(step: "show" | "verify") {
+  el.mnemonicShow.hidden = step !== "show";
+  el.mnemonicVerify.hidden = step !== "verify";
+  el.mnemonicQuizError.hidden = true;
+  el.mnemonicQuizError.textContent = "";
+  if (currentPhase === "mnemonic") {
+    el.phase.textContent =
+      step === "verify" ? "Confirm your backup" : PHASE_LABELS.mnemonic;
+  }
+}
+
+function shuffleInPlace<T>(items: T[]): T[] {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+  return items;
+}
+
+function pickQuizPositions(wordCount: number): number[] {
+  const count = Math.min(QUIZ_WORD_COUNT, wordCount);
+  const pool = Array.from({ length: wordCount }, (_, i) => i);
+  shuffleInPlace(pool);
+  return pool.slice(0, count).sort((a, b) => a - b);
+}
+
+function quizIsComplete(): boolean {
+  return (
+    quizPositions.length > 0 &&
+    quizAnswers.length === quizPositions.length &&
+    quizAnswers.every((answer, i) => answer === quizPositions[i])
+  );
+}
+
+function quizAllSlotsFilled(): boolean {
+  return quizAnswers.length > 0 && quizAnswers.every((answer) => answer != null);
+}
+
+function firstEmptyQuizSlot(): number {
+  const empty = quizAnswers.findIndex((answer) => answer == null);
+  return empty >= 0 ? empty : 0;
+}
+
+function updateMnemonicQuizUi() {
+  const slotsHost = el.mnemonicQuiz.querySelector<HTMLElement>(".mnemonic-quiz-slots");
+  const bankHost = el.mnemonicQuiz.querySelector<HTMLElement>(".mnemonic-quiz-bank");
+  if (!slotsHost || !bankHost || !pendingMnemonic) return;
+
+  const words = splitMnemonicWords(pendingMnemonic);
+  for (const slot of slotsHost.querySelectorAll<HTMLButtonElement>(".mnemonic-quiz-slot")) {
+    const slotIndex = Number(slot.dataset.slotIndex);
+    const answerPos = quizAnswers[slotIndex];
+    const value = slot.querySelector<HTMLElement>(".mnemonic-quiz-slot-value");
+    if (!value) continue;
+    if (answerPos == null) {
+      value.textContent = "Tap a word below";
+      value.classList.add("is-empty");
+    } else {
+      value.textContent = words[answerPos] ?? "";
+      value.classList.remove("is-empty");
+    }
+    slot.classList.toggle("is-active", slotIndex === quizActiveSlot);
+  }
+
+  const used = new Set(quizAnswers.filter((pos): pos is number => pos != null));
+  for (const chip of bankHost.querySelectorAll<HTMLButtonElement>(".mnemonic-quiz-chip")) {
+    const pos = Number(chip.dataset.quizPos);
+    chip.disabled = used.has(pos);
+  }
+
+  el.mnemonicQuizError.hidden = true;
+  el.mnemonicQuizError.textContent = "";
+  if (quizAllSlotsFilled() && !quizIsComplete()) {
+    el.mnemonicQuizError.hidden = false;
+    el.mnemonicQuizError.textContent =
+      "That does not match. Clear a slot and try again, or show the phrase again.";
+    el.btnMnemonicDone.disabled = true;
+  } else {
+    el.btnMnemonicDone.disabled = !quizIsComplete();
+  }
+}
+
+function placeQuizWord(wordPos: number) {
+  if (quizAnswers.includes(wordPos)) return;
+  const slotIndex =
+    quizAnswers[quizActiveSlot] == null ? quizActiveSlot : firstEmptyQuizSlot();
+  if (quizAnswers[slotIndex] != null) return;
+  quizAnswers[slotIndex] = wordPos;
+  quizActiveSlot = firstEmptyQuizSlot();
+  updateMnemonicQuizUi();
+}
+
+function clearQuizSlot(slotIndex: number) {
+  if (quizAnswers[slotIndex] == null) {
+    quizActiveSlot = slotIndex;
+    updateMnemonicQuizUi();
+    return;
+  }
+  quizAnswers[slotIndex] = null;
+  quizActiveSlot = slotIndex;
+  updateMnemonicQuizUi();
+}
+
+function buildMnemonicQuiz(positions: number[]) {
+  el.mnemonicQuiz.textContent = "";
+  quizAnswers = positions.map(() => null);
+  quizActiveSlot = 0;
+  if (!pendingMnemonic) return;
+
+  const words = splitMnemonicWords(pendingMnemonic);
+  const slotsHost = document.createElement("div");
+  slotsHost.className = "mnemonic-quiz-slots";
+  slotsHost.setAttribute("aria-label", "Word slots to fill");
+
+  positions.forEach((pos, slotIndex) => {
+    const slot = document.createElement("button");
+    slot.type = "button";
+    slot.className = "mnemonic-quiz-slot";
+    slot.dataset.slotIndex = String(slotIndex);
+    const index = document.createElement("span");
+    index.className = "mnemonic-quiz-slot-index";
+    index.textContent = `Word ${pos + 1}`;
+    const value = document.createElement("span");
+    value.className = "mnemonic-quiz-slot-value is-empty";
+    value.textContent = "Tap a word below";
+    slot.append(index, value);
+    slot.addEventListener("click", () => clearQuizSlot(slotIndex));
+    slotsHost.appendChild(slot);
+  });
+
+  const bankHost = document.createElement("div");
+  bankHost.className = "mnemonic-quiz-bank";
+  bankHost.setAttribute("aria-label", "Words to select");
+
+  for (const pos of shuffleInPlace([...positions])) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "mnemonic-quiz-chip";
+    chip.dataset.quizPos = String(pos);
+    chip.textContent = words[pos] ?? "";
+    chip.addEventListener("click", () => placeQuizWord(pos));
+    bankHost.appendChild(chip);
+  }
+
+  el.mnemonicQuiz.append(slotsHost, bankHost);
+  updateMnemonicQuizUi();
+}
+
+function clearPendingMnemonic() {
+  pendingMnemonic = null;
+  quizPositions = [];
+  quizAnswers = [];
+  quizActiveSlot = 0;
+  el.mnemonicText.textContent = "";
+  el.mnemonicQuiz.textContent = "";
+  el.btnMnemonicDone.disabled = true;
+  showMnemonicStep("show");
+}
+
+function setBackupVerified(verified: boolean) {
+  try {
+    if (verified) localStorage.setItem(BACKUP_VERIFIED_KEY, "1");
+    else localStorage.removeItem(BACKUP_VERIFIED_KEY);
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+function isBackupVerified(): boolean {
+  try {
+    return localStorage.getItem(BACKUP_VERIFIED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function isBackupBannerDismissed(): boolean {
+  try {
+    return localStorage.getItem(BACKUP_BANNER_DISMISSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setBackupBannerDismissed(dismissed: boolean) {
+  try {
+    if (dismissed) localStorage.setItem(BACKUP_BANNER_DISMISSED_KEY, "1");
+    else localStorage.removeItem(BACKUP_BANNER_DISMISSED_KEY);
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+function clearBackupLocalFlags() {
+  setBackupVerified(false);
+  setBackupBannerDismissed(false);
+}
+
+function updateBackupBanner() {
+  const show =
+    currentPhase === "ready" &&
+    lastTotalSats > 0 &&
+    !isBackupVerified() &&
+    !isBackupBannerDismissed();
+  el.backupBanner.hidden = !show;
 }
 
 function renderSummary(s: WalletSummary) {
@@ -1195,6 +1490,7 @@ function renderSummary(s: WalletSummary) {
     el.balancePending.hidden = true;
     el.balancePending.textContent = "";
   }
+  updateBackupBanner();
 }
 
 function renderCombined(c: CombinedSummary) {
@@ -1231,6 +1527,7 @@ function renderCombined(c: CombinedSummary) {
   el.sendBalancePrivate.textContent = privateBalance;
   el.receiveBalancePrivate.textContent = privateBalance;
   el.swapBalancePrivate.textContent = privateBalance;
+  updateBackupBanner();
 }
 
 function renderLastTxid() {
@@ -1569,31 +1866,111 @@ for (const event of ["pointerdown", "keydown", "wheel", "mousemove"] as const) {
 }
 
 window.setInterval(() => {
-  if (currentPhase !== "ready" || autoLockMinutes <= 0 || syncing || sending) return;
+  // Allow auto-lock during sync (lock is non-blocking). Still wait out an in-flight send.
+  if (currentPhase !== "ready" || autoLockMinutes <= 0 || sending) return;
   if (Date.now() - lastActivityTs < autoLockMinutes * 60_000) return;
-  void (async () => {
-    try {
-      await invoke("lock_wallet");
-    } catch {
-      return;
-    }
-    stopAutoSync();
-    setPhase("unlock");
-    setStatus("Wallet locked after inactivity.");
-  })();
+  void lockWallet("Wallet locked after inactivity.");
 }, 30_000);
 
-function requireMatchingPassphrases(a: string, b: string): string | null {
-  if (!a) return "Passphrase is required.";
+type PassStrength = {
+  ok: boolean;
+  level: 0 | 1 | 2 | 3;
+  label: string;
+  reason: string | null;
+};
+
+function scorePassphrase(pw: string): PassStrength {
+  if (!pw) {
+    return { ok: false, level: 0, label: "", reason: "Passphrase is required." };
+  }
+  if (pw.length < MIN_PASSPHRASE_LEN) {
+    return {
+      ok: false,
+      level: 0,
+      label: "Too short",
+      reason: `Use at least ${MIN_PASSPHRASE_LEN} characters.`,
+    };
+  }
+  const variety = [
+    /[a-z]/.test(pw),
+    /[A-Z]/.test(pw),
+    /\d/.test(pw),
+    /[^A-Za-z0-9]/.test(pw),
+  ].filter(Boolean).length;
+  let level: 1 | 2 | 3 = 1;
+  if (pw.length >= 16 && variety >= 3) level = 3;
+  else if (pw.length >= 12 && variety >= 2) level = 2;
+  const labels = ["", "Weak", "OK", "Strong"] as const;
+  return { ok: true, level, label: labels[level], reason: null };
+}
+
+function requireWalletPassphrase(a: string, b: string): string | null {
+  const strength = scorePassphrase(a);
+  if (!strength.ok) return strength.reason;
   if (a !== b) return "Passphrases do not match.";
   return null;
+}
+
+function renderPassMeter(
+  pw: string,
+  confirm: string,
+  meter: HTMLElement,
+  fill: HTMLElement,
+  label: HTMLElement,
+) {
+  if (!pw) {
+    meter.hidden = true;
+    fill.dataset.level = "0";
+    label.textContent = "";
+    return;
+  }
+  meter.hidden = false;
+  const strength = scorePassphrase(pw);
+  fill.dataset.level = String(strength.level);
+  if (!strength.ok) {
+    label.textContent = strength.reason ?? "Too short";
+    return;
+  }
+  if (confirm && confirm !== pw) {
+    label.textContent = `${strength.label} — passphrases do not match.`;
+    return;
+  }
+  label.textContent =
+    strength.level <= 1
+      ? `${strength.label} — consider a longer passphrase with mixed characters.`
+      : strength.label;
+}
+
+function syncPassMeters() {
+  renderPassMeter(
+    el.onboardPassphrase.value,
+    el.onboardPassphrase2.value,
+    el.onboardPassMeter,
+    el.onboardPassFill,
+    el.onboardPassLabel,
+  );
+  renderPassMeter(
+    el.restorePassphrase.value,
+    el.restorePassphrase2.value,
+    el.restorePassMeter,
+    el.restorePassFill,
+    el.restorePassLabel,
+  );
+  renderPassMeter(
+    el.migratePassphrase.value,
+    el.migratePassphrase2.value,
+    el.migratePassMeter,
+    el.migratePassFill,
+    el.migratePassLabel,
+  );
+  updateBusyUi();
 }
 
 async function boot() {
   setPhase("boot");
   setError(null);
   applyTheme(readThemePref());
-  updateBusyUi();
+  syncPassMeters();
   try {
     const exists = await invoke<boolean>("wallet_exists");
     if (!exists) {
@@ -1705,9 +2082,12 @@ async function wipeAndOnboard() {
     hideLoading();
   }
   lastTxid = null;
+  clearPendingMnemonic();
+  clearBackupLocalFlags();
   renderLastTxid();
   renderHistory([]);
   setPhase("onboarding");
+  syncPassMeters();
   setStatus("Wallet data reset — create or restore a wallet.");
 }
 
@@ -1730,7 +2110,7 @@ el.btnUnlock.addEventListener("click", async () => {
 });
 
 el.btnMigrate.addEventListener("click", async () => {
-  const err = requireMatchingPassphrases(
+  const err = requireWalletPassphrase(
     el.migratePassphrase.value,
     el.migratePassphrase2.value,
   );
@@ -1745,6 +2125,7 @@ el.btnMigrate.addEventListener("click", async () => {
     });
     el.migratePassphrase.value = "";
     el.migratePassphrase2.value = "";
+    syncPassMeters();
     await enterReady();
   } catch (e) {
     setError(String(e));
@@ -1759,6 +2140,8 @@ async function runSync(opts: { quiet: boolean }): Promise<boolean> {
   startMwebProgressPolling();
   try {
     const result = await invoke<SyncResult>("sync_wallet");
+    // Lock may have completed while sync was finishing.
+    if (currentPhase !== "ready") return false;
     renderSummary(result.summary);
     await refreshCombined();
     await refreshHistory();
@@ -1784,18 +2167,47 @@ async function runSync(opts: { quiet: boolean }): Promise<boolean> {
     }
     return true;
   } catch (e) {
+    if (currentPhase !== "ready") return false;
     syncState = "error";
+    const message = String(e);
+    // Expected when the user locks mid-sync — not a failure to surface.
+    if (/locked/i.test(message)) return false;
     if (opts.quiet) setStatus(`Auto-sync failed: ${e}`, "error");
-    else setError(String(e));
+    else setError(message);
     return false;
   } finally {
     stopMwebProgressPolling();
     syncing = false;
-    updateBusyUi();
+    if (currentPhase === "ready") updateBusyUi();
+  }
+}
+
+async function lockWallet(statusMessage = "Wallet locked.") {
+  stopAutoSync();
+  stopMwebProgressPolling();
+  syncing = false;
+  setPhase("unlock");
+  setStatus(statusMessage);
+  updateBusyUi();
+  try {
+    await invoke("lock_wallet");
+  } catch (e) {
+    setError(String(e));
   }
 }
 
 el.restoreMnemonic.addEventListener("input", updateBusyUi);
+
+for (const input of [
+  el.onboardPassphrase,
+  el.onboardPassphrase2,
+  el.restorePassphrase,
+  el.restorePassphrase2,
+  el.migratePassphrase,
+  el.migratePassphrase2,
+]) {
+  input.addEventListener("input", syncPassMeters);
+}
 
 el.btnCreate.addEventListener("click", async () => {
   if (syncing || sending) return;
@@ -1805,7 +2217,7 @@ el.btnCreate.addEventListener("click", async () => {
     );
     return;
   }
-  const err = requireMatchingPassphrases(
+  const err = requireWalletPassphrase(
     el.onboardPassphrase.value,
     el.onboardPassphrase2.value,
   );
@@ -1822,10 +2234,13 @@ el.btnCreate.addEventListener("click", async () => {
       req: { network: "mainnet" },
       passphrase,
     });
+    pendingMnemonic = resp.mnemonic;
     renderMnemonic(resp.mnemonic);
     renderSummary(resp.summary);
     el.onboardPassphrase.value = "";
     el.onboardPassphrase2.value = "";
+    syncPassMeters();
+    showMnemonicStep("show");
     setPhase("mnemonic");
     setStatus(null);
   } catch (e) {
@@ -1843,7 +2258,7 @@ el.btnRestore.addEventListener("click", async () => {
     setError("Enter a recovery phrase or extended key to restore.");
     return;
   }
-  const err = requireMatchingPassphrases(
+  const err = requireWalletPassphrase(
     el.restorePassphrase.value,
     el.restorePassphrase2.value,
   );
@@ -1867,11 +2282,15 @@ el.btnRestore.addEventListener("click", async () => {
       },
       passphrase,
     });
+    // Restoring implies the user already holds a backup; treat as verified.
+    setBackupVerified(true);
+    setBackupBannerDismissed(false);
     renderSummary(s);
     el.restorePassphrase.value = "";
     el.restorePassphrase2.value = "";
     el.restoreMnemonic.value = "";
     el.restoreAezeedPass.value = "";
+    syncPassMeters();
     setPhase("ready");
     setView("balance");
     syncing = false;
@@ -1887,12 +2306,51 @@ el.btnRestore.addEventListener("click", async () => {
   }
 });
 
+el.btnMnemonicToVerify.addEventListener("click", () => {
+  if (!pendingMnemonic) {
+    setError("Recovery phrase is no longer available. Reset and create a new wallet.");
+    return;
+  }
+  const words = splitMnemonicWords(pendingMnemonic);
+  quizPositions = pickQuizPositions(words.length);
+  buildMnemonicQuiz(quizPositions);
+  showMnemonicStep("verify");
+  el.mnemonicQuiz.querySelector<HTMLButtonElement>(".mnemonic-quiz-bank .mnemonic-quiz-chip")?.focus();
+});
+
+el.btnMnemonicShowAgain.addEventListener("click", () => {
+  if (!pendingMnemonic) {
+    setError("Recovery phrase is no longer available. Reset and create a new wallet.");
+    return;
+  }
+  renderMnemonic(pendingMnemonic);
+  showMnemonicStep("show");
+  el.btnMnemonicDone.disabled = true;
+});
+
 el.btnMnemonicDone.addEventListener("click", () => {
-  el.mnemonicText.textContent = "";
+  if (!pendingMnemonic) {
+    setError("Recovery phrase is no longer available. Reset and create a new wallet.");
+    return;
+  }
+  if (!quizIsComplete()) {
+    el.mnemonicQuizError.hidden = false;
+    el.mnemonicQuizError.textContent =
+      "Fill each numbered slot with the matching word from your written phrase.";
+    return;
+  }
+  clearPendingMnemonic();
+  setBackupVerified(true);
+  setBackupBannerDismissed(false);
   setPhase("ready");
   setView("balance");
   void loadSettings();
   void runSync({ quiet: false });
+});
+
+el.btnBackupBannerDismiss.addEventListener("click", () => {
+  setBackupBannerDismissed(true);
+  updateBackupBanner();
 });
 
 el.btnSync.addEventListener("click", () => {
@@ -2070,14 +2528,19 @@ el.sendForm.addEventListener("submit", async (event) => {
   const amountLabel = formatLtc(preview.amount_sats);
   const feeSource =
     selectedFeeRateSatVb != null ? "explorer suggestion" : "estimated";
+  const totalLeave = preview.amount_sats + preview.fee_sats;
   const confirmed = await openConfirm({
     title: "Review transaction",
     message:
       "Check the destination carefully. Once broadcast, a Litecoin transaction cannot be recalled.",
+    destination: address,
+    warning: isHighFee(preview.fee_sats, preview.amount_sats)
+      ? "Network fee is at least half of the amount you are sending. You can still proceed if this is intentional."
+      : undefined,
     rows: [
-      ["To", address, true],
       ["Amount", amountLabel],
       ["Network fee", formatLtc(preview.fee_sats)],
+      ["Total leaving wallet", formatLtc(totalLeave)],
       ...(drain ? ([["Emptying", "All transparent funds"]] as DetailRow[]) : []),
     ],
     detail: `Fee rate ${preview.fee_rate_sat_vb} sat/vB (${feeSource}).`,
@@ -2196,11 +2659,8 @@ el.btnSaveSettings.addEventListener("click", async () => {
   }
 });
 
-el.btnLock.addEventListener("click", async () => {
-  await invoke("lock_wallet");
-  stopAutoSync();
-  setPhase("unlock");
-  setStatus("Wallet locked.");
+el.btnLock.addEventListener("click", () => {
+  void lockWallet();
 });
 
 el.btnPegin.addEventListener("click", async () => {
@@ -2235,11 +2695,16 @@ el.btnPegin.addEventListener("click", async () => {
     hideLoading();
   }
 
+  const pegInFees = preview.mweb_fee_sats + preview.transparent_fee_sats;
   const confirmed = await openConfirm({
     title: "Move funds to private",
     message:
       "A peg-in moves transparent funds onto the MWEB side of the chain, where balances and amounts are confidential.",
+    warning: isHighFee(pegInFees, preview.amount_sats)
+      ? "Combined fees are at least half of the amount you are moving. You can still proceed if this is intentional."
+      : undefined,
     rows: [
+      ["Amount", formatLtc(preview.amount_sats)],
       ["Private credit", formatLtc(preview.private_credit_sats)],
       ["Private network fee", formatLtc(preview.mweb_fee_sats)],
       ["Miner fee", formatLtc(preview.transparent_fee_sats)],
@@ -2335,10 +2800,14 @@ el.btnMwebSend.addEventListener("click", async () => {
     title: "Review private send",
     message:
       "Check the stealth address carefully. Once broadcast, a private transfer cannot be recalled.",
+    destination: address,
+    warning: isHighFee(preview.fee_sats, preview.amount_sats)
+      ? "Network fee is at least half of the amount you are sending. You can still proceed if this is intentional."
+      : undefined,
     rows: [
-      ["To", address, true],
       ["Amount", formatLtc(preview.amount_sats)],
       ["Network fee", formatLtc(preview.fee_sats)],
+      ["Total leaving private", formatLtc(preview.amount_sats + preview.fee_sats)],
     ],
     confirmLabel: drain ? "Send all private" : "Send private",
   });
@@ -2426,10 +2895,14 @@ el.btnPegout.addEventListener("click", async () => {
     title: "Move funds to public",
     message:
       "This returns private funds to a fresh public address of your own, where the amount becomes publicly visible.",
+    destination: address,
+    warning: isHighFee(preview.fee_sats, preview.amount_sats)
+      ? "Network fee is at least half of the amount you are moving. You can still proceed if this is intentional."
+      : undefined,
     rows: [
-      ["To (your new public address)", address, true],
       ["Amount", formatLtc(preview.amount_sats)],
       ["Network fee", formatLtc(preview.fee_sats)],
+      ["Total leaving private", formatLtc(preview.amount_sats + preview.fee_sats)],
     ],
     detail: `Destination dust floor is ${preview.dust_sats.toLocaleString("en-US")} litoshis.`,
     confirmLabel: drain ? "Move all to public" : "Move to public",
