@@ -11,16 +11,20 @@ default = ["mweb"]
 mweb = []
 
 [dependencies]
-# Nested checkout under ../../bdk so path deps to bdk/crates/* resolve.
-bdk_wallet = { path = "../../../bdk/bdk_wallet", default-features = false, features = [
+# Rev-pinned forks so a standalone clone builds reproducibly. The bdk.git rev
+# must match the one bdk_wallet's manifest pins, or Cargo builds two copies of
+# bdk_chain/bdk_mweb and types stop unifying (the build fails loudly if they
+# drift). For local development against sibling checkouts, add [patch]
+# overrides in .cargo/config.toml (see docs).
+bdk_wallet = { git = "https://github.com/IndigoNakamoto/bdk_wallet.git", rev = "5118184083a2451f49996324f132dfe05c8a8318", default-features = false, features = [
     "std",
     "rusqlite",
     "keys-bip39",
     "mweb",
     "mweb-sqlite",
 ] }
-bdk_electrum = { path = "../../../bdk/crates/electrum", default-features = true }
-bdk_mweb = { path = "../../../bdk/crates/mweb", default-features = false, features = [
+bdk_electrum = { git = "https://github.com/IndigoNakamoto/bdk.git", rev = "312d0d566a264637c9a7ddfb85d7673a8f351a26", default-features = true }
+bdk_mweb = { git = "https://github.com/IndigoNakamoto/bdk.git", rev = "312d0d566a264637c9a7ddfb85d7673a8f351a26", default-features = false, features = [
     "std",
     "zkp",
     "persist",
@@ -46,7 +50,7 @@ scrypt = { version = "0.12.0", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
-bdk_wallet = { path = "../../../bdk/bdk_wallet", default-features = false, features = [
+bdk_wallet = { git = "https://github.com/IndigoNakamoto/bdk_wallet.git", rev = "5118184083a2451f49996324f132dfe05c8a8318", default-features = false, features = [
     "std",
     "rusqlite",
     "keys-bip39",

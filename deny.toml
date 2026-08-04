@@ -49,8 +49,11 @@ wildcards = "allow"
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# Litecoin forks used by the sibling BDK trees (pinned by rev in Cargo.lock).
+# Litecoin fork repos, all pinned by rev in the manifests and Cargo.lock.
 allow-git = [
+  "https://github.com/IndigoNakamoto/bdk",
+  "https://github.com/IndigoNakamoto/bdk_wallet",
   "https://github.com/IndigoNakamoto/rust-electrum-client",
+  "https://github.com/IndigoNakamoto/rust-litecoin",
   "https://github.com/IndigoNakamoto/rust-miniscript",
 ]

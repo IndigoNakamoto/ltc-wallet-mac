@@ -69,15 +69,17 @@ signing closes, so prefer building from source until releases are signed.
 
 ## 4. Cross-check the dependency pins
 
-The wallet's key handling and MWEB cryptography live in sibling repositories.
-Each release's notes list the exact commits it was built from. Confirm they
-match [`deps/pins.env`](../deps/pins.env) at the release tag:
+The wallet's key handling and MWEB cryptography live in the fork repositories,
+which are rev-pinned in the Cargo manifests and `Cargo.lock`. Inspect the pins
+at the release tag:
 
 ```bash
-git show v0.2.1:deps/pins.env
+git show v0.2.1:crates/wallet-core/Cargo.toml | grep 'rev ='
+git show v0.2.1:Cargo.toml | grep 'rev ='
 ```
 
-If the release notes and the pin file disagree, do not trust the artifact.
+CI builds only from those pins (`cargo --locked`), so the manifests at the tag
+are authoritative for what shipped.
 
 ## 5. Verify address derivation independently
 

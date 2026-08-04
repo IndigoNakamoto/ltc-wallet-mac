@@ -7,10 +7,11 @@
 #       the file CI built (integrity, not provenance).
 #
 #   verify-release.sh source-build [<tag>]
-#       Clone this repo (at <tag>, default: current checkout) plus the sibling
-#       dependencies pinned in deps/pins.env into a temp dir, build the app
-#       from source, and print SHA-256 hashes of the produced bundles for
-#       comparison against the published SHA256SUMS.
+#       Clone this repo (at <tag>, default: current checkout) into a temp dir,
+#       build the app from source (cargo fetches the rev-pinned fork
+#       dependencies from the manifests/Cargo.lock), and print SHA-256 hashes
+#       of the produced bundles for comparison against the published
+#       SHA256SUMS.
 #
 #       NOTE: builds are not yet bit-for-bit reproducible (.dmg/.AppImage
 #       containers embed timestamps), so hashes of containers may differ even
@@ -74,19 +75,8 @@ cmd_source_build() {
     git clone "$here" "$workdir/ltc-wallet-mac"
   fi
 
-  # shellcheck disable=SC1091
-  source "$workdir/ltc-wallet-mac/deps/pins.env"
-  echo "Pinned siblings:"
-  echo "  $BDK_REPO @ $BDK_REF"
-  echo "  $BDK_WALLET_REPO @ $BDK_WALLET_REF"
-  echo "  $RUST_LITECOIN_REPO @ $RUST_LITECOIN_REF"
-
-  git clone "https://github.com/$BDK_REPO" "$workdir/bdk"
-  git -C "$workdir/bdk" checkout --detach "$BDK_REF"
-  git clone "https://github.com/$BDK_WALLET_REPO" "$workdir/bdk/bdk_wallet"
-  git -C "$workdir/bdk/bdk_wallet" checkout --detach "$BDK_WALLET_REF"
-  git clone "https://github.com/$RUST_LITECOIN_REPO" "$workdir/rust-litecoin"
-  git -C "$workdir/rust-litecoin" checkout --detach "$RUST_LITECOIN_REF"
+  echo "Fork dependencies are rev-pinned in the manifests and Cargo.lock;"
+  echo "cargo fetches them during the build."
 
   (
     cd "$workdir/ltc-wallet-mac"

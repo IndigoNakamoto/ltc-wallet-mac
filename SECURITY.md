@@ -64,8 +64,8 @@ servers, and social engineering.
 
 ### Trusted computing base
 
-Beyond this repository, the wallet's correctness depends on the pinned sibling
-forks (see [`deps/pins.env`](deps/pins.env)):
+Beyond this repository, the wallet's correctness depends on the pinned fork
+dependencies (rev-pinned in the Cargo manifests and `Cargo.lock`):
 
 - [`IndigoNakamoto/bdk`](https://github.com/IndigoNakamoto/bdk) (+ `bdk_wallet`) — wallet logic, MWEB crypto
 - [`IndigoNakamoto/rust-litecoin`](https://github.com/IndigoNakamoto/rust-litecoin) — consensus types and serialization
@@ -98,8 +98,8 @@ Only the latest release receives security fixes.
 ## Release integrity
 
 Every release attaches `SHA256SUMS-<platform>.txt` files generated in CI, and
-its notes list the sibling dependency SHAs it was built from. CI builds only
-from the pinned SHAs in `deps/pins.env`. Additionally:
+its notes point at the dependency pins it was built from. CI builds only from
+the revs pinned in the manifests and `Cargo.lock`. Additionally:
 
 - **Build provenance attestations**: every artifact digest is attested by
   GitHub's build provenance service, linking it to the exact commit and

@@ -49,10 +49,10 @@ Severity: **H**igh / **M**edium / **L**ow / **I**nformational.
 
 `IndigoNakamoto/bdk` has been through a security pass covering `crates/mweb`
 (the plan and findings are in that repo's `docs/SECURITY_PLAN.md`). This repo
-carries the wallet half of it, and `deps/pins.env` points at that work as
-`BDK_REF=d8e220c2…`. The pin cannot move back: the wallet-side code below does
-not compile against an earlier `bdk`. CI needs that commit pushed to
-`IndigoNakamoto/bdk` before it can resolve the pin.
+carries the wallet half of it, and the `bdk.git` rev pinned in
+`crates/wallet-core/Cargo.toml` includes that work (it entered at
+`d8e220c2…`). The pin cannot move back: the wallet-side code below does not
+compile against an earlier `bdk`.
 
 What the pin move changes for this repo:
 
@@ -92,9 +92,9 @@ blob, which means a v3 secrets format. Tracked as O12 below.
 
 1. **Treat the sibling forks as primary targets**: `IndigoNakamoto/bdk`
    (`crates/mweb` especially), `bdk_wallet`, `rust-litecoin`,
-   `rust-electrum-client`, `rust-miniscript` at the SHAs in `deps/pins.env` /
-   `Cargo.lock`. All consensus and MWEB cryptography lives there, not in this
-   repo.
+   `rust-electrum-client`, `rust-miniscript` at the revs pinned in the Cargo
+   manifests / `Cargo.lock`. All consensus and MWEB cryptography lives there,
+   not in this repo.
 2. Priority order inside this repo: `crates/wallet-core/src/secrets.rs`,
    `seed.rs`, `aezeed.rs`, `descriptors.rs`, `mweb.rs`, `electrum.rs`,
    `rpc.rs`, `discovery.rs`, then the Tauri command surface

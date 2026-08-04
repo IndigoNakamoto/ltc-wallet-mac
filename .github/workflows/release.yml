@@ -2,8 +2,10 @@
 # to a draft GitHub Release. Trigger via Actions → "Release" → Run workflow,
 # or by pushing to the `release` branch.
 #
-# Sibling path deps are checked out next to this repo using SHAs in deps/pins.env.
-# All third-party actions are pinned to commit SHAs.
+# All fork dependencies (IndigoNakamoto/bdk, bdk_wallet, rust-litecoin) are
+# rev-pinned git deps in the manifests with a committed Cargo.lock, so the
+# build is reproducible from this checkout alone. All third-party actions are
+# pinned to commit SHAs.
 #
 # Apple signing + notarization are drop-in: when the APPLE_CERTIFICATE /
 # APPLE_CERTIFICATE_PASSWORD / APPLE_SIGNING_IDENTITY / APPLE_ID /
@@ -52,45 +54,8 @@ jobs:
       HAS_MINISIGN: ${{ secrets.MINISIGN_SECRET_KEY != '' }}
 
     steps:
-      - name: Checkout wallet
+      - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: ltc-wallet-mac
-
-      - name: Load sibling pins
-        id: pins
-        shell: bash
-        run: |
-          set -euo pipefail
-          # shellcheck disable=SC1091
-          source ltc-wallet-mac/deps/pins.env
-          echo "bdk_repo=$BDK_REPO" >> "$GITHUB_OUTPUT"
-          echo "bdk_ref=$BDK_REF" >> "$GITHUB_OUTPUT"
-          echo "bdk_wallet_repo=$BDK_WALLET_REPO" >> "$GITHUB_OUTPUT"
-          echo "bdk_wallet_ref=$BDK_WALLET_REF" >> "$GITHUB_OUTPUT"
-          echo "rust_litecoin_repo=$RUST_LITECOIN_REPO" >> "$GITHUB_OUTPUT"
-          echo "rust_litecoin_ref=$RUST_LITECOIN_REF" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout bdk sibling
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: ${{ steps.pins.outputs.bdk_repo }}
-          ref: ${{ steps.pins.outputs.bdk_ref }}
-          path: bdk
-
-      - name: Checkout bdk_wallet into bdk
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: ${{ steps.pins.outputs.bdk_wallet_repo }}
-          ref: ${{ steps.pins.outputs.bdk_wallet_ref }}
-          path: bdk/bdk_wallet
-
-      - name: Checkout rust-litecoin sibling
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: ${{ steps.pins.outputs.rust_litecoin_repo }}
-          ref: ${{ steps.pins.outputs.rust_litecoin_ref }}
-          path: rust-litecoin
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -108,7 +73,7 @@ jobs:
         with:
           node-version: lts/*
           cache: npm
-          cache-dependency-path: ltc-wallet-mac/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable branch snapshot
@@ -117,11 +82,8 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          workspaces: ltc-wallet-mac -> target
 
       - name: Install frontend dependencies
-        working-directory: ltc-wallet-mac
         run: npm ci
 
       # Signed variant: runs only when Apple credentials are configured.
@@ -140,7 +102,6 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
-          projectPath: ltc-wallet-mac
           tagName: v__VERSION__
           releaseName: "LTC Wallet v__VERSION__"
           releaseBody: |
@@ -153,10 +114,9 @@ jobs:
             **Verify your download** — see [`docs/VERIFYING.md`](https://github.com/${{ github.repository }}/blob/main/docs/VERIFYING.md).
             Each platform attaches a `SHA256SUMS-<platform>.txt` with checksums of its artifacts.
 
-            **Sibling pins** (must match `deps/pins.env` at the release tag)
-            - bdk: `${{ steps.pins.outputs.bdk_ref }}`
-            - bdk_wallet: `${{ steps.pins.outputs.bdk_wallet_ref }}`
-            - rust-litecoin: `${{ steps.pins.outputs.rust_litecoin_ref }}`
+            **Dependency pins** — the IndigoNakamoto/bdk, bdk_wallet, and
+            rust-litecoin revs are pinned in the manifests and Cargo.lock at
+            the release tag.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
@@ -168,7 +128,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          projectPath: ltc-wallet-mac
           tagName: v__VERSION__
           releaseName: "LTC Wallet v__VERSION__"
           releaseBody: |
@@ -183,10 +142,9 @@ jobs:
             **Verify your download** — see [`docs/VERIFYING.md`](https://github.com/${{ github.repository }}/blob/main/docs/VERIFYING.md).
             Each platform attaches a `SHA256SUMS-<platform>.txt` with checksums of its artifacts.
 
-            **Sibling pins** (must match `deps/pins.env` at the release tag)
-            - bdk: `${{ steps.pins.outputs.bdk_ref }}`
-            - bdk_wallet: `${{ steps.pins.outputs.bdk_wallet_ref }}`
-            - rust-litecoin: `${{ steps.pins.outputs.rust_litecoin_ref }}`
+            **Dependency pins** — the IndigoNakamoto/bdk, bdk_wallet, and
+            rust-litecoin revs are pinned in the manifests and Cargo.lock at
+            the release tag.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

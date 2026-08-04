@@ -21,7 +21,7 @@ how to verify a release in [`docs/VERIFYING.md`](docs/VERIFYING.md).
 ../rust-litecoin    # litecoin 0.32.8-rc.2 (workspace [patch])
 ```
 
-Pinned SHAs for reproducible CI/release builds live in [`deps/pins.env`](deps/pins.env). Update that file when intentionally bumping siblings.
+The IndigoNakamoto/bdk, bdk_wallet, and rust-litecoin forks are pinned by rev directly in the Cargo manifests (see `crates/wallet-core/Cargo.toml` and the root `[patch.crates-io]`), backed by the committed `Cargo.lock`. Update those revs when intentionally bumping the forks; for day-to-day development against local sibling checkouts, add `[patch]` overrides in `.cargo/config.toml` (see `docs/LOCAL_DEV.md`).
 
 ## Layout
 
@@ -111,7 +111,7 @@ Share the `.AppImage` (`chmod +x LTC\ Wallet_*.AppImage && ./LTC\ Wallet_*.AppIm
 
 [`.github/workflows/release.yml`](.github/workflows/release.yml) builds **macOS (Apple Silicon)** and **Linux x64** artifacts and attaches them to a **draft** GitHub Release.
 
-1. Keep [`deps/pins.env`](deps/pins.env) pointed at known-good sibling SHAs.
+1. Keep the fork revs in the Cargo manifests pointed at known-good commits.
 2. Push to the `release` branch, or run **Actions → Release → Run workflow**.
 3. Open the draft release, edit notes, publish.
 

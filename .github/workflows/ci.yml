@@ -1,7 +1,11 @@
 # Build, test, lint, and supply-chain checks on every PR and push to main.
 #
-# Sibling path deps are checked out next to this repo using SHAs in deps/pins.env,
-# mirroring release.yml. All third-party actions are pinned to commit SHAs.
+# All fork dependencies (IndigoNakamoto/bdk, bdk_wallet, rust-litecoin) are
+# rev-pinned git deps in the manifests with a committed Cargo.lock, so a plain
+# checkout builds standalone. If the bdk rev pinned here ever diverges from
+# the one bdk_wallet pins, Cargo builds two copies of bdk_chain/bdk_mweb and
+# the build fails on type mismatches — the old pins.env drift check is now
+# enforced by the compiler. All third-party actions are pinned to commit SHAs.
 #
 # The weekly schedule re-runs the supply-chain and frontend audit jobs so new
 # advisories against already-merged dependencies are caught without waiting
@@ -28,109 +32,8 @@ jobs:
     if: github.event_name != 'schedule'
 
     steps:
-      - name: Checkout wallet
+      - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: ltc-wallet-mac
-
-      - name: Load sibling pins
-        id: pins
-        shell: bash
-        run: |
-          set -euo pipefail
-          # shellcheck disable=SC1091
-          source ltc-wallet-mac/deps/pins.env
-          echo "bdk_repo=$BDK_REPO" >> "$GITHUB_OUTPUT"
-          echo "bdk_ref=$BDK_REF" >> "$GITHUB_OUTPUT"
-          echo "bdk_wallet_repo=$BDK_WALLET_REPO" >> "$GITHUB_OUTPUT"
-          echo "bdk_wallet_ref=$BDK_WALLET_REF" >> "$GITHUB_OUTPUT"
-          echo "rust_litecoin_repo=$RUST_LITECOIN_REPO" >> "$GITHUB_OUTPUT"
-          echo "rust_litecoin_ref=$RUST_LITECOIN_REF" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout bdk sibling
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: ${{ steps.pins.outputs.bdk_repo }}
-          ref: ${{ steps.pins.outputs.bdk_ref }}
-          path: bdk
-
-      - name: Checkout bdk_wallet into bdk
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: ${{ steps.pins.outputs.bdk_wallet_repo }}
-          ref: ${{ steps.pins.outputs.bdk_wallet_ref }}
-          path: bdk/bdk_wallet
-
-      - name: Checkout rust-litecoin sibling
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: ${{ steps.pins.outputs.rust_litecoin_repo }}
-          ref: ${{ steps.pins.outputs.rust_litecoin_ref }}
-          path: rust-litecoin
-
-      # bdk_wallet pins bdk and rust-litecoin for its own CI, and this repo pins
-      # all three. Where those overlap they can drift, and the failure is quiet:
-      # the tree assembled here would be one bdk_wallet's CI never compiled, so
-      # a green run there would say nothing about what actually ships.
-      #
-      # Being *ahead* is allowed, because that is what landing a bdk change
-      # looks like before bdk_wallet has caught up. Behind or diverged is not.
-      # Compared through the API so neither sibling needs a full-history clone.
-      - name: Check sibling pins agree
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # shellcheck disable=SC1091
-          source ltc-wallet-mac/deps/pins.env
-          ours_bdk_repo=$BDK_REPO
-          ours_bdk_ref=$BDK_REF
-          ours_ltc_repo=$RUST_LITECOIN_REPO
-          ours_ltc_ref=$RUST_LITECOIN_REF
-
-          # Overwrites the same names with bdk_wallet's view of them.
-          # shellcheck disable=SC1091
-          source bdk/bdk_wallet/deps/pins.env
-
-          status=0
-
-          compare() {
-            local label=$1 repo=$2 theirs=$3 ours=$4 state
-            if [ "$theirs" = "$ours" ]; then
-              echo "ok: $label identical (${ours:0:8})"
-              return
-            fi
-            state=$(gh api "repos/$repo/compare/$theirs...$ours" --jq .status)
-            case "$state" in
-              ahead|identical)
-                echo "ok: $label — this repo is $state of bdk_wallet's pin"
-                ;;
-              *)
-                echo "MISMATCH: $label pins are '$state'."
-                echo "  bdk_wallet/deps/pins.env:     ${theirs:0:8}"
-                echo "  ltc-wallet-mac/deps/pins.env: ${ours:0:8}"
-                status=1
-                ;;
-            esac
-          }
-
-          if [ "$ours_bdk_repo" != "$BDK_REPO" ]; then
-            echo "MISMATCH: bdk repo differs ($ours_bdk_repo vs $BDK_REPO)"
-            status=1
-          else
-            compare bdk "$BDK_REPO" "$BDK_REF" "$ours_bdk_ref"
-          fi
-
-          if [ "$ours_ltc_repo" != "$RUST_LITECOIN_REPO" ]; then
-            echo "MISMATCH: rust-litecoin repo differs ($ours_ltc_repo vs $RUST_LITECOIN_REPO)"
-            status=1
-          else
-            compare rust-litecoin "$RUST_LITECOIN_REPO" "$RUST_LITECOIN_REF" "$ours_ltc_ref"
-          fi
-
-          exit $status
 
       - name: Install Linux system dependencies
         run: |
@@ -150,19 +53,14 @@ jobs:
 
       - name: Rust cache
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-        with:
-          workspaces: ltc-wallet-mac -> target
 
       - name: Check lockfile is up to date
-        working-directory: ltc-wallet-mac
         run: cargo metadata --locked --format-version 1 > /dev/null
 
       - name: Clippy
-        working-directory: ltc-wallet-mac
         run: cargo clippy --workspace --all-targets --locked
 
       - name: Tests
-        working-directory: ltc-wallet-mac
         run: cargo test --workspace --locked
 
   supply-chain:
@@ -170,45 +68,8 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout wallet
+      - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: ltc-wallet-mac
-
-      - name: Load sibling pins
-        id: pins
-        shell: bash
-        run: |
-          set -euo pipefail
-          # shellcheck disable=SC1091
-          source ltc-wallet-mac/deps/pins.env
-          echo "bdk_repo=$BDK_REPO" >> "$GITHUB_OUTPUT"
-          echo "bdk_ref=$BDK_REF" >> "$GITHUB_OUTPUT"
-          echo "bdk_wallet_repo=$BDK_WALLET_REPO" >> "$GITHUB_OUTPUT"
-          echo "bdk_wallet_ref=$BDK_WALLET_REF" >> "$GITHUB_OUTPUT"
-          echo "rust_litecoin_repo=$RUST_LITECOIN_REPO" >> "$GITHUB_OUTPUT"
-          echo "rust_litecoin_ref=$RUST_LITECOIN_REF" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout bdk sibling
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: ${{ steps.pins.outputs.bdk_repo }}
-          ref: ${{ steps.pins.outputs.bdk_ref }}
-          path: bdk
-
-      - name: Checkout bdk_wallet into bdk
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: ${{ steps.pins.outputs.bdk_wallet_repo }}
-          ref: ${{ steps.pins.outputs.bdk_wallet_ref }}
-          path: bdk/bdk_wallet
-
-      - name: Checkout rust-litecoin sibling
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: ${{ steps.pins.outputs.rust_litecoin_repo }}
-          ref: ${{ steps.pins.outputs.rust_litecoin_ref }}
-          path: rust-litecoin
 
       - name: Install cargo-audit and cargo-deny
         uses: taiki-e/install-action@1beb33eee6d086258184383af9a538940be190ed # v2.85.6
@@ -216,11 +77,9 @@ jobs:
           tool: cargo-audit,cargo-deny
 
       - name: cargo audit
-        working-directory: ltc-wallet-mac
         run: cargo audit
 
       - name: cargo deny
-        working-directory: ltc-wallet-mac
         run: cargo deny check advisories bans licenses sources
 
   frontend:
