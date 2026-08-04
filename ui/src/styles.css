@@ -688,6 +688,11 @@ code {
   outline-offset: 4px;
 }
 
+.balance-total.is-hidden-balance {
+  letter-spacing: 0.12em;
+  font-variant-numeric: normal;
+}
+
 .balance-fiat {
   margin-top: 0.2rem;
   color: rgba(255, 255, 255, 0.78);
@@ -2000,6 +2005,26 @@ textarea {
 
 .unit-option input {
   margin: 0;
+}
+
+.privacy-list {
+  margin: 0.35rem 0 0.75rem;
+  padding-left: 1.15rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+.privacy-list strong {
+  color: var(--text);
+  font-weight: 560;
+}
+
+.tx-label-field {
+  margin-top: 0.75rem;
 }
 
 .receive-request {

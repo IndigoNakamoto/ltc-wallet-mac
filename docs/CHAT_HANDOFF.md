@@ -54,7 +54,8 @@ Boot → Unlock | Migrate | Onboarding → Mnemonic backup → verify quiz → H
 - **Done (P0):** Hard-gated recovery-phrase quiz after create; wallet passphrase minimum 8 chars + strength meter on Create/Migrate/Restore; first-funds backup banner for unverified/legacy installs; send/swap review shows full destination, type badge, total leaving wallet, and high-fee warning (≥50% of amount).
 - **Done (P1):** Public/Private first-use coach (`ltc-mweb-coach-seen`); empty-wallet funding CTA → Public Receive; peg-in maturity as spendable vs maturing (+ unconfirmed private, History maturing pill); Swap dual-fee labels + MWEB “no explorer” success copy / kind-aware litview; progressive security checklist at ≥1 LTC (`ltc-security-checklist-dismissed`).
 - **Done (P2):** Display unit LTC|litoshis (`ltc-display-unit`, Settings + hero tap); Public BIP21 amount/label QR + copy payment link + Send URI parse; fee chips time labels + Economy + custom sat/vB + `estimate_fee` when explorer hints off; receive toast/history pulse + first-receive modal (`ltc-first-receive-seen`).
-- **Next (P3):** Hide balance, send-side address reuse warnings, network privacy disclosure panel, transaction labels.
+- **Done (P3):** Hide balances (`ltc-hide-balances`, Settings + hero LTC→litoshis→hidden); send-side transparent reuse warn via `address_reuse_hint` (warn-only; Private never warns); Settings “What leaves this computer” panel; tx labels in wipeable `tx_labels.json` sidecar (confirm note + History/detail edit).
+- **Next (P4):** Contacts, coin control, history export, multi-wallet, hardware, Tor — future architecture.
 
 ## Implementation status
 
@@ -67,6 +68,7 @@ Boot → Unlock | Migrate | Onboarding → Mnemonic backup → verify quiz → H
 7. UX P0 fund-loss safety (backup verify, passphrase gate, send confirm)
 8. UX P1 MWEB comprehension (coach, funding CTA, maturity, Swap fees/explorer, security checklist)
 9. UX P2 payment polish (units, BIP21, fee clarity, receive feedback)
+10. UX P3 privacy hardening (hide balance, reuse warn, disclosure, labels)
 
 ## Litview / LRK
 

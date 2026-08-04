@@ -248,6 +248,21 @@ pub struct UpdateSettingsRequest {
     pub use_explorer_fee_hints: bool,
 }
 
+/// Whether a destination matches a previously used transparent wallet address.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AddressReuseHint {
+    /// True when the address is a revealed BIP84 receive/change address that has been used.
+    pub reused: bool,
+}
+
+/// Request to set or clear a local transaction label.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetTxLabelRequest {
+    pub txid: String,
+    /// Empty string clears the label.
+    pub label: String,
+}
+
 /// One input or output from explorer tx enrichment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TxIo {

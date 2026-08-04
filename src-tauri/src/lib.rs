@@ -1,13 +1,15 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, State};
 use wallet_core::{
-    CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate, FeeLadder,
-    MigrateEncryptRequest, MwebBroadcastResult, MwebSendPreview, MwebSendRequest, MwebSyncProgress,
-    PeginPreview, PeginRequest, PeginResult, PegoutPreview, PegoutRequest, RestoreWalletRequest,
-    SendPreview, SendRequest, SendResult, SyncResult, TxEnrichment, TxRecord, UnlockRequest,
-    UpdateSettingsRequest, WalletApp, WalletSettings, WalletSummary,
+    AddressReuseHint, CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate,
+    FeeLadder, MigrateEncryptRequest, MwebBroadcastResult, MwebSendPreview, MwebSendRequest,
+    MwebSyncProgress, PeginPreview, PeginRequest, PeginResult, PegoutPreview, PegoutRequest,
+    RestoreWalletRequest, SendPreview, SendRequest, SendResult, SetTxLabelRequest, SyncResult,
+    TxEnrichment, TxRecord, UnlockRequest, UpdateSettingsRequest, WalletApp, WalletSettings,
+    WalletSummary,
 };
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -139,6 +141,40 @@ async fn get_combined_summary(
 ) -> Result<CombinedSummary, String> {
     let wallet = Arc::clone(&state);
     tauri::async_runtime::spawn_blocking(move || wallet.combined_summary().map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn address_reuse_hint(
+    state: State<'_, Arc<WalletApp>>,
+    address: String,
+) -> Result<AddressReuseHint, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || {
+        wallet.address_reuse_hint(&address).map_err(map_err)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn get_tx_labels(
+    state: State<'_, Arc<WalletApp>>,
+) -> Result<HashMap<String, String>, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.get_tx_labels().map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_tx_label(
+    state: State<'_, Arc<WalletApp>>,
+    req: SetTxLabelRequest,
+) -> Result<(), String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.set_tx_label(req).map_err(map_err))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -437,6 +473,9 @@ pub fn run() {
             get_summary,
             get_combined_summary,
             list_transactions,
+            address_reuse_hint,
+            get_tx_labels,
+            set_tx_label,
             get_receive_address,
             get_mweb_receive_address,
             estimate_fee,

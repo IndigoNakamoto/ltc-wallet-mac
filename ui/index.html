@@ -377,7 +377,7 @@
                   id="balance-total"
                   role="button"
                   tabindex="0"
-                  title="Tap to switch LTC / litoshis"
+                  title="Tap to cycle LTC / litoshis / hide balances"
                 >
                   0.00000000 LTC
                 </p>
@@ -838,12 +838,42 @@
                     <span>litoshis</span>
                   </label>
                 </div>
-                <span class="hint">Also cycles when you tap the balance on the home screen.</span>
+                <span class="hint">Home balance tap cycles LTC → litoshis → hidden.</span>
               </fieldset>
+              <label class="check">
+                <input id="settings-hide-balances" type="checkbox" />
+                <span>Hide balances</span>
+              </label>
               <label class="check">
                 <input id="settings-fee-hints" type="checkbox" />
                 <span>Show explorer fee-rate suggestions on send</span>
               </label>
+            </div>
+
+            <div class="card" id="privacy-disclosure">
+              <h3>What leaves this computer</h3>
+              <ul class="privacy-list">
+                <li>
+                  <strong>Electrum</strong> — learns your transparent addresses and your IP.
+                </li>
+                <li>
+                  <strong>MWEB peers</strong> — learn your IP (not your transparent address list).
+                </li>
+                <li>
+                  <strong>Explorer (litview)</strong> — learns your IP when fetching spot price or fee
+                  hints; IP and a specific txid when you open transaction details or click “View on
+                  litview”. Wallet address lists are never uploaded.
+                </li>
+                <li>
+                  <strong>On disk</strong> — transparent wallet metadata in sqlite is plaintext.
+                  Use FileVault (or other full-disk encryption) on this Mac.
+                </li>
+              </ul>
+              <p class="hint">
+                There is no Tor or proxy support yet. Turning off “Show LTC/USD” and fee-rate
+                suggestions above limits litview contact to actions you start (detail view or
+                “View on litview”). This wallet does not make you anonymous on the network.
+              </p>
             </div>
 
             <div class="card">

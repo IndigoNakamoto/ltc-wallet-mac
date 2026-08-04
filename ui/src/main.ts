@@ -142,6 +142,10 @@ type FeeEstimate = {
   is_fallback: boolean;
 };
 
+type AddressReuseHint = {
+  reused: boolean;
+};
+
 type DisplayUnit = "ltc" | "litoshis";
 
 type ParsedPaymentUri = {
@@ -212,7 +216,10 @@ const BACKUP_BANNER_DISMISSED_KEY = "ltc-backup-banner-dismissed";
 const MWEB_COACH_SEEN_KEY = "ltc-mweb-coach-seen";
 const SECURITY_CHECKLIST_DISMISSED_KEY = "ltc-security-checklist-dismissed";
 const DISPLAY_UNIT_KEY = "ltc-display-unit";
+const HIDE_BALANCES_KEY = "ltc-hide-balances";
 const FIRST_RECEIVE_SEEN_KEY = "ltc-first-receive-seen";
+const HIDDEN_AMOUNT = "••••";
+const MAX_TX_LABEL_CHARS = 140;
 
 const DUST_LITOSHIS = 2940;
 const AUTO_SYNC_MS = 60_000;
@@ -366,6 +373,7 @@ const el = {
   settingsShowFiat: document.querySelector<HTMLInputElement>("#settings-show-fiat")!,
   settingsUnitLtc: document.querySelector<HTMLInputElement>("#settings-unit-ltc")!,
   settingsUnitLitoshis: document.querySelector<HTMLInputElement>("#settings-unit-litoshis")!,
+  settingsHideBalances: document.querySelector<HTMLInputElement>("#settings-hide-balances")!,
   settingsFeeHints: document.querySelector<HTMLInputElement>("#settings-fee-hints")!,
   settingsElectrum: document.querySelector<HTMLInputElement>("#settings-electrum")!,
   settingsValidateTls: document.querySelector<HTMLInputElement>("#settings-validate-tls")!,
@@ -434,6 +442,8 @@ let activeCard: Card | null = null;
 let syncState: SyncState = "idle";
 let lastTxid: string | null = null;
 let txRecords: TxRecord[] = [];
+/** Local notes keyed by txid/wtxid (never sent to litview). */
+let txLabels: Record<string, string> = {};
 let autoSyncTimer: number | null = null;
 let mwebProgressTimer: number | null = null;
 let statusTimer: number | null = null;
@@ -445,6 +455,7 @@ let lastPendingSats = 0;
 let lastCombined: CombinedSummary | null = null;
 let lastSummary: WalletSummary | null = null;
 let displayUnit: DisplayUnit = "ltc";
+let hideBalances = false;
 let selectedFeeRateSatVb: number | null = null;
 let customFeeActive = false;
 /** True once we've observed a non-zero balance this session (legacy first-receive skip). */
@@ -494,7 +505,7 @@ function formatUsd(amount: number): string {
 }
 
 function renderFiat() {
-  if (!showFiat || spotPriceUsd == null || !Number.isFinite(spotPriceUsd)) {
+  if (hideBalances || !showFiat || spotPriceUsd == null || !Number.isFinite(spotPriceUsd)) {
     el.balanceFiat.hidden = true;
     el.balanceFiat.textContent = "";
     return;
@@ -538,7 +549,7 @@ function buildIoSection(title: string, items: TxIo[]): HTMLElement {
         : "(no address)";
       const amt = document.createElement("span");
       amt.className = "amt";
-      amt.textContent = formatAmount(io.value_sats);
+      amt.textContent = hideBalances ? HIDDEN_AMOUNT : formatAmountPlain(io.value_sats);
       li.append(addr, amt);
       list.appendChild(li);
     }
@@ -641,12 +652,19 @@ function formatLitoshis(sats: number): string {
   return `(${formatLitoshisPlain(sats)})`;
 }
 
-/** Primary amount display respecting the unit preference. */
+/** Primary amount display respecting unit preference (and hide-balances). */
 function formatAmount(sats: number): string {
+  if (hideBalances) return HIDDEN_AMOUNT;
+  return formatAmountPlain(sats);
+}
+
+/** Amount display that never hides — for send/swap confirm and result dialogs. */
+function formatAmountPlain(sats: number): string {
   return displayUnit === "litoshis" ? formatLitoshisPlain(sats) : formatLtc(sats);
 }
 
 function formatAmountSubtitle(sats: number): string {
+  if (hideBalances) return HIDDEN_AMOUNT;
   return displayUnit === "litoshis" ? `(${formatLtc(sats)})` : formatLitoshis(sats);
 }
 
@@ -726,6 +744,46 @@ function persistDisplayUnit(unit: DisplayUnit) {
   }
 }
 
+function readHideBalances(): boolean {
+  try {
+    return localStorage.getItem(HIDE_BALANCES_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function persistHideBalances(hidden: boolean) {
+  try {
+    if (hidden) localStorage.setItem(HIDE_BALANCES_KEY, "1");
+    else localStorage.removeItem(HIDE_BALANCES_KEY);
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+function syncHideBalancesUi() {
+  el.settingsHideBalances.checked = hideBalances;
+  el.balanceTotal.classList.toggle("is-hidden-balance", hideBalances);
+  el.balanceTotal.title = hideBalances
+    ? "Balances hidden — tap to show LTC"
+    : "Tap to cycle LTC / litoshis / hide balances";
+}
+
+function setHideBalances(hidden: boolean) {
+  hideBalances = hidden;
+  persistHideBalances(hidden);
+  syncHideBalancesUi();
+  if (lastCombined) renderCombined(lastCombined);
+  else if (lastSummary) renderSummary(lastSummary);
+  if (txRecords.length) renderHistory(txRecords);
+}
+
+function refreshBalanceDisplays() {
+  if (lastCombined) renderCombined(lastCombined);
+  else if (lastSummary) renderSummary(lastSummary);
+  if (txRecords.length) renderHistory(txRecords);
+}
+
 function amountInputs(): HTMLInputElement[] {
   return [el.sendAmount, el.mwebSendAmount, el.peginAmount, el.pegoutAmount, el.receiveAmount];
 }
@@ -746,12 +804,17 @@ function syncAmountFieldLabels() {
   el.receiveAmount.inputMode = displayUnit === "litoshis" ? "numeric" : "decimal";
   el.settingsUnitLtc.checked = displayUnit === "ltc";
   el.settingsUnitLitoshis.checked = displayUnit === "litoshis";
+  syncHideBalancesUi();
 }
 
-function setDisplayUnit(unit: DisplayUnit, opts: { clearAmbiguous?: boolean } = {}) {
+function setDisplayUnit(unit: DisplayUnit, opts: { clearAmbiguous?: boolean; keepHidden?: boolean } = {}) {
   const prev = displayUnit;
   displayUnit = unit;
   persistDisplayUnit(unit);
+  if (!opts.keepHidden && hideBalances) {
+    hideBalances = false;
+    persistHideBalances(false);
+  }
   syncAmountFieldLabels();
   if (opts.clearAmbiguous !== false && prev !== unit) {
     for (const input of amountInputs()) {
@@ -760,9 +823,7 @@ function setDisplayUnit(unit: DisplayUnit, opts: { clearAmbiguous?: boolean } = 
       input.value = "";
     }
   }
-  if (lastCombined) renderCombined(lastCombined);
-  else if (lastSummary) renderSummary(lastSummary);
-  if (txRecords.length) renderHistory(txRecords);
+  refreshBalanceDisplays();
   void refreshPublicReceiveQr();
 }
 
@@ -1134,6 +1195,43 @@ function appendConfirmDestination(host: HTMLElement, address: string, badge: str
   addr.textContent = address;
   box.append(head, addr);
   host.appendChild(box);
+}
+
+/** Append optional note field; returns a getter for the trimmed label. */
+function appendTxLabelField(body: HTMLElement, initial = ""): () => string {
+  const field = document.createElement("label");
+  field.className = "field tx-label-field";
+  const caption = document.createElement("span");
+  caption.className = "field-label";
+  caption.textContent = "Note (optional)";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.maxLength = MAX_TX_LABEL_CHARS;
+  input.placeholder = "e.g. rent, exchange withdrawal";
+  input.value = initial;
+  input.spellcheck = true;
+  field.append(caption, input);
+  body.appendChild(field);
+  return () => input.value.trim().slice(0, MAX_TX_LABEL_CHARS);
+}
+
+async function persistTxLabel(txid: string, label: string) {
+  const note = label.trim().slice(0, MAX_TX_LABEL_CHARS);
+  try {
+    await invoke("set_tx_label", { req: { txid, label: note } });
+    if (note) txLabels[txid] = note;
+    else delete txLabels[txid];
+  } catch {
+    /* soft-fail: broadcast already succeeded */
+  }
+}
+
+async function refreshTxLabels() {
+  try {
+    txLabels = (await invoke<Record<string, string>>("get_tx_labels")) ?? {};
+  } catch {
+    txLabels = {};
+  }
 }
 
 async function openConfirm(opts: {
@@ -2105,7 +2203,8 @@ function txDirection(tx: TxRecord): "in" | "out" {
 }
 
 function formatSignedAmount(tx: TxRecord): string {
-  return `${txDirection(tx) === "in" ? "+" : "−"}${formatAmount(Math.abs(tx.net_sats))}`;
+  if (hideBalances) return HIDDEN_AMOUNT;
+  return `${txDirection(tx) === "in" ? "+" : "−"}${formatAmountPlain(Math.abs(tx.net_sats))}`;
 }
 
 function buildTxRow(tx: TxRecord, index: number): HTMLLIElement {
@@ -2121,7 +2220,8 @@ function buildTxRow(tx: TxRecord, index: number): HTMLLIElement {
 
   const meta = document.createElement("span");
   meta.className = "tx-meta";
-  meta.textContent = [TX_KIND_LABELS[tx.kind], formatTxTime(tx.timestamp)]
+  const note = txLabels[tx.txid]?.trim();
+  meta.textContent = [note, TX_KIND_LABELS[tx.kind], formatTxTime(tx.timestamp)]
     .filter(Boolean)
     .join(" · ");
   meta.hidden = meta.textContent === "";
@@ -2214,7 +2314,11 @@ async function openTxDetail(index: number) {
     if (tx.sent_sats > 0) rows.push(["Sent", formatAmount(tx.sent_sats)]);
     rows.push([
       "Fee",
-      tx.fee_sats != null ? `${tx.fee_sats.toLocaleString("en-US")} litoshis` : "unknown",
+      hideBalances
+        ? HIDDEN_AMOUNT
+        : tx.fee_sats != null
+          ? `${tx.fee_sats.toLocaleString("en-US")} litoshis`
+          : "unknown",
     ]);
     rows.push([idLabel, tx.txid, true]);
 
@@ -2230,7 +2334,7 @@ async function openTxDetail(index: number) {
           enrichment = null;
         }
       }
-      if (enrichment?.fee_sats != null && tx.fee_sats == null) {
+      if (enrichment?.fee_sats != null && tx.fee_sats == null && !hideBalances) {
         rows.splice(
           rows.findIndex((r) => r[0] === "Fee"),
           1,
@@ -2249,9 +2353,11 @@ async function openTxDetail(index: number) {
     if (hasNext) actions.push({ id: "next", label: "Next ›", kind: "ghost", nav: true });
     if (canExplore) actions.push({ id: "explore", label: "View on litview", kind: "secondary" });
     actions.push({ id: "copy", label: "Copy ID", kind: "secondary" });
+    actions.push({ id: "save-note", label: "Save note", kind: "secondary" });
     actions.push({ id: "close", label: "Close", kind: "primary" });
 
     const dir = txDirection(tx);
+    let readLabel = () => txLabels[tx.txid] ?? "";
     const result = await openModal({
       title: `Transaction ${at + 1} of ${txRecords.length}`,
       wide: true,
@@ -2260,6 +2366,7 @@ async function openTxDetail(index: number) {
         amount.className = dir === "in" ? "detail-amount in" : "detail-amount";
         amount.textContent = formatSignedAmount(tx);
         body.append(amount, buildDetailList(rows));
+        readLabel = appendTxLabelField(body, txLabels[tx.txid] ?? "");
         if (!canExplore) {
           appendParagraph(
             body,
@@ -2293,6 +2400,13 @@ async function openTxDetail(index: number) {
       },
     });
 
+    const latestNote = readLabel();
+    const priorNote = txLabels[tx.txid] ?? "";
+    if (latestNote !== priorNote) {
+      await persistTxLabel(tx.txid, latestNote);
+      renderHistory(txRecords);
+    }
+
     if (result === "prev") {
       at -= 1;
       continue;
@@ -2305,13 +2419,21 @@ async function openTxDetail(index: number) {
       await openExplorerForTxid(tx.txid);
       continue;
     }
-    if (result === "copy") await copyText(tx.txid, "Transaction ID copied.");
+    if (result === "copy") {
+      await copyText(tx.txid, "Transaction ID copied.");
+      continue;
+    }
+    if (result === "save-note") {
+      setStatus(latestNote ? "Note saved." : "Note cleared.", "success");
+      continue;
+    }
     return;
   }
 }
 
 async function refreshHistory() {
   try {
+    await refreshTxLabels();
     const txs = await invoke<TxRecord[]>("list_transactions");
     renderHistory(txs);
   } catch {
@@ -2564,6 +2686,7 @@ async function boot() {
 
 async function enterReady() {
   displayUnit = readDisplayUnit();
+  hideBalances = readHideBalances();
   syncAmountFieldLabels();
   const s = await invoke<WalletSummary>("load_wallet");
   renderSummary(s);
@@ -3035,8 +3158,17 @@ el.receiveLabel.addEventListener("input", () => {
   void refreshPublicReceiveQr();
 });
 
+/** Hero tap: LTC → litoshis → hidden → LTC. */
 function cycleDisplayUnit() {
-  setDisplayUnit(displayUnit === "ltc" ? "litoshis" : "ltc");
+  if (hideBalances) {
+    setDisplayUnit("ltc");
+    return;
+  }
+  if (displayUnit === "ltc") {
+    setDisplayUnit("litoshis", { keepHidden: true });
+    return;
+  }
+  setHideBalances(true);
 }
 
 el.balanceTotal.addEventListener("click", () => cycleDisplayUnit());
@@ -3052,6 +3184,9 @@ el.settingsUnitLtc.addEventListener("change", () => {
 });
 el.settingsUnitLitoshis.addEventListener("change", () => {
   if (el.settingsUnitLitoshis.checked) setDisplayUnit("litoshis");
+});
+el.settingsHideBalances.addEventListener("change", () => {
+  setHideBalances(el.settingsHideBalances.checked);
 });
 
 el.feeCustom.addEventListener("input", () => {
@@ -3215,7 +3350,7 @@ el.sendForm.addEventListener("submit", async (event) => {
     hideLoading();
   }
 
-  const amountLabel = formatAmount(preview.amount_sats);
+  const amountLabel = formatAmountPlain(preview.amount_sats);
   const feeSource =
     selectedFeeRateSatVb != null
       ? customFeeActive
@@ -3223,28 +3358,45 @@ el.sendForm.addEventListener("submit", async (event) => {
         : "explorer suggestion"
       : "estimated";
   const totalLeave = preview.amount_sats + preview.fee_sats;
+  const reuseWarnings: string[] = [];
+  try {
+    const hint = await invoke<AddressReuseHint>("address_reuse_hint", { address });
+    if (hint.reused) {
+      reuseWarnings.push("This address appears to have been used before.");
+    }
+  } catch {
+    /* soft-fail: do not block send */
+  }
+  if (isHighFee(preview.fee_sats, preview.amount_sats)) {
+    reuseWarnings.push(
+      "Network fee is at least half of the amount you are sending. You can still proceed if this is intentional.",
+    );
+  }
+  let readLabel = () => "";
   const confirmed = await openConfirm({
     title: "Review transaction",
     message:
       "Check the destination carefully. Once broadcast, a Litecoin transaction cannot be recalled.",
     destination: address,
-    warning: isHighFee(preview.fee_sats, preview.amount_sats)
-      ? "Network fee is at least half of the amount you are sending. You can still proceed if this is intentional."
-      : undefined,
+    warning: reuseWarnings.length ? reuseWarnings : undefined,
     rows: [
       ["Amount", amountLabel],
-      ["Network fee", formatAmount(preview.fee_sats)],
-      ["Total leaving wallet", formatAmount(totalLeave)],
+      ["Network fee", formatAmountPlain(preview.fee_sats)],
+      ["Total leaving wallet", formatAmountPlain(totalLeave)],
       ...(drain ? ([["Emptying", "All transparent funds"]] as DetailRow[]) : []),
     ],
     detail: `Fee rate ${preview.fee_rate_sat_vb} sat/vB (${feeSource}).`,
     confirmLabel: drain ? "Send all now" : "Send now",
+    afterDetail: (body) => {
+      readLabel = appendTxLabelField(body, "");
+    },
   });
   if (!confirmed) {
     sending = false;
     updateBusyUi();
     return;
   }
+  const pendingLabel = readLabel();
 
   updateBusyUi();
   showLoading("Broadcasting transaction…");
@@ -3269,6 +3421,7 @@ el.sendForm.addEventListener("submit", async (event) => {
 
   lastTxid = result.txid;
   renderLastTxid();
+  await persistTxLabel(result.txid, pendingLabel);
   el.sendAddress.value = "";
   el.sendAmount.value = "";
   el.sendDrain.checked = false;
@@ -3286,7 +3439,7 @@ el.sendForm.addEventListener("submit", async (event) => {
     rows: [
       ["To", address, true],
       ["Amount", amountLabel],
-      ["Network fee", formatAmount(result.fee_sats)],
+      ["Network fee", formatAmountPlain(result.fee_sats)],
       ["Transaction ID", result.txid, true],
     ],
     copy: { value: result.txid, label: "Copy ID", toast: "Transaction ID copied." },
@@ -3401,17 +3554,18 @@ el.btnPegin.addEventListener("click", async () => {
       "Combined fees are at least half of the amount you are moving. You can still proceed if this is intentional.",
     );
   }
+  let readLabel = () => "";
   const confirmed = await openConfirm({
     title: "Move funds to private",
     message:
       "A peg-in moves transparent funds onto the MWEB side of the chain, where balances and amounts are confidential. The public broadcast pays a miner fee; MWEB credits pay a private network fee.",
     warning: warnings,
     rows: [
-      ["Amount", formatAmount(preview.amount_sats)],
-      ["Private credit", formatAmount(preview.private_credit_sats)],
-      ["Private network fee (MWEB)", formatAmount(preview.mweb_fee_sats)],
-      ["Miner fee (public chain)", formatAmount(preview.transparent_fee_sats)],
-      ["Leaves transparent", formatAmount(preview.total_from_transparent_sats)],
+      ["Amount", formatAmountPlain(preview.amount_sats)],
+      ["Private credit", formatAmountPlain(preview.private_credit_sats)],
+      ["Private network fee (MWEB)", formatAmountPlain(preview.mweb_fee_sats)],
+      ["Miner fee (public chain)", formatAmountPlain(preview.transparent_fee_sats)],
+      ["Leaves transparent", formatAmountPlain(preview.total_from_transparent_sats)],
     ],
     afterDetail: (body) => {
       const details = document.createElement("details");
@@ -3423,6 +3577,7 @@ el.btnPegin.addEventListener("click", async () => {
         "The miner fee pays Litecoin miners to confirm the public peg-in transaction. The private network fee is burned on MWEB when your coins are credited. Both are required for a peg-in.";
       details.append(summary, p);
       body.appendChild(details);
+      readLabel = appendTxLabelField(body, "");
     },
     confirmLabel: drain ? "Move all to private" : "Move to private",
   });
@@ -3431,6 +3586,7 @@ el.btnPegin.addEventListener("click", async () => {
     updateBusyUi();
     return;
   }
+  const pendingLabel = readLabel();
 
   updateBusyUi();
   showLoading("Broadcasting peg-in…");
@@ -3454,6 +3610,7 @@ el.btnPegin.addEventListener("click", async () => {
 
   lastTxid = result.txid;
   renderLastTxid();
+  await persistTxLabel(result.txid, pendingLabel);
   el.peginAmount.value = "";
   el.peginDrain.checked = false;
 
@@ -3462,8 +3619,8 @@ el.btnPegin.addEventListener("click", async () => {
     title: "Peg-in sent",
     message: "Broadcast to the network. The funds become spendable on the MWEB side once mature.",
     rows: [
-      ["Private credit", formatAmount(preview.private_credit_sats)],
-      ["Total fees", formatAmount(result.fee_sats)],
+      ["Private credit", formatAmountPlain(preview.private_credit_sats)],
+      ["Total fees", formatAmountPlain(result.fee_sats)],
       ["Matures in", `${result.maturity_blocks} blocks`],
       ["Transaction ID", result.txid, true],
     ],
@@ -3511,6 +3668,7 @@ el.btnMwebSend.addEventListener("click", async () => {
     hideLoading();
   }
 
+  let readLabel = () => "";
   const confirmed = await openConfirm({
     title: "Review private send",
     message:
@@ -3520,17 +3678,21 @@ el.btnMwebSend.addEventListener("click", async () => {
       ? "Network fee is at least half of the amount you are sending. You can still proceed if this is intentional."
       : undefined,
     rows: [
-      ["Amount", formatAmount(preview.amount_sats)],
-      ["Network fee", formatAmount(preview.fee_sats)],
-      ["Total leaving private", formatAmount(preview.amount_sats + preview.fee_sats)],
+      ["Amount", formatAmountPlain(preview.amount_sats)],
+      ["Network fee", formatAmountPlain(preview.fee_sats)],
+      ["Total leaving private", formatAmountPlain(preview.amount_sats + preview.fee_sats)],
     ],
     confirmLabel: drain ? "Send all private" : "Send private",
+    afterDetail: (body) => {
+      readLabel = appendTxLabelField(body, "");
+    },
   });
   if (!confirmed) {
     sending = false;
     updateBusyUi();
     return;
   }
+  const pendingLabel = readLabel();
 
   updateBusyUi();
   showLoading("Broadcasting private send…");
@@ -3552,6 +3714,7 @@ el.btnMwebSend.addEventListener("click", async () => {
     updateBusyUi();
   }
 
+  await persistTxLabel(result.wtxid, pendingLabel);
   el.mwebSendAddress.value = "";
   el.mwebSendAmount.value = "";
   el.mwebSendDrain.checked = false;
@@ -3563,8 +3726,8 @@ el.btnMwebSend.addEventListener("click", async () => {
       "Broadcast over the MWEB network. Private transfers are not listed on public explorers — that is expected. Keep the Kernel ID as your reference.",
     rows: [
       ["To", address, true],
-      ["Amount", formatAmount(preview.amount_sats)],
-      ["Network fee", formatAmount(result.fee_sats)],
+      ["Amount", formatAmountPlain(preview.amount_sats)],
+      ["Network fee", formatAmountPlain(result.fee_sats)],
       ["Kernel ID", result.wtxid, true],
     ],
     copy: { value: result.wtxid, label: "Copy ID", toast: "Kernel ID copied." },
@@ -3607,6 +3770,7 @@ el.btnPegout.addEventListener("click", async () => {
     hideLoading();
   }
 
+  let readLabel = () => "";
   const confirmed = await openConfirm({
     title: "Move funds to public",
     message:
@@ -3616,18 +3780,22 @@ el.btnPegout.addEventListener("click", async () => {
       ? "Network fee is at least half of the amount you are moving. You can still proceed if this is intentional."
       : undefined,
     rows: [
-      ["Amount", formatAmount(preview.amount_sats)],
-      ["Network fee", formatAmount(preview.fee_sats)],
-      ["Total leaving private", formatAmount(preview.amount_sats + preview.fee_sats)],
+      ["Amount", formatAmountPlain(preview.amount_sats)],
+      ["Network fee", formatAmountPlain(preview.fee_sats)],
+      ["Total leaving private", formatAmountPlain(preview.amount_sats + preview.fee_sats)],
     ],
     detail: `Destination dust floor is ${preview.dust_sats.toLocaleString("en-US")} litoshis.`,
     confirmLabel: drain ? "Move all to public" : "Move to public",
+    afterDetail: (body) => {
+      readLabel = appendTxLabelField(body, "");
+    },
   });
   if (!confirmed) {
     sending = false;
     updateBusyUi();
     return;
   }
+  const pendingLabel = readLabel();
 
   updateBusyUi();
   showLoading("Broadcasting swap…");
@@ -3649,6 +3817,7 @@ el.btnPegout.addEventListener("click", async () => {
     updateBusyUi();
   }
 
+  await persistTxLabel(result.wtxid, pendingLabel);
   el.pegoutAmount.value = "";
   el.pegoutDrain.checked = false;
 
@@ -3659,8 +3828,8 @@ el.btnPegout.addEventListener("click", async () => {
       "Broadcast to the network. The public funds arrive once the swap confirms. Private transfers are not listed on public explorers — that is expected. Keep the Kernel ID as your reference.",
     rows: [
       ["To (your new public address)", address, true],
-      ["Amount", formatAmount(preview.amount_sats)],
-      ["Network fee", formatAmount(result.fee_sats)],
+      ["Amount", formatAmountPlain(preview.amount_sats)],
+      ["Network fee", formatAmountPlain(result.fee_sats)],
       ["Kernel ID", result.wtxid, true],
     ],
     copy: { value: result.wtxid, label: "Copy ID", toast: "Kernel ID copied." },
@@ -3668,5 +3837,6 @@ el.btnPegout.addEventListener("click", async () => {
 });
 
 displayUnit = readDisplayUnit();
+hideBalances = readHideBalances();
 syncAmountFieldLabels();
 void boot();

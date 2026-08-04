@@ -14,12 +14,13 @@ use bdk_wallet::{KeychainKind, PersistedWallet, SignOptions};
 
 use crate::descriptors::{self, create_params, load_params};
 use crate::dto::{
-    CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate,
+    AddressReuseHint, CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate,
     MigrateEncryptRequest, MwebBroadcastResult, MwebScheme, MwebSendPreview, MwebSendRequest,
     PeginPreview, PeginRequest, PeginResult, PegoutPreview, PegoutRequest, RestoreWalletRequest,
-    SendPreview, SendRequest, SendResult, SyncResult, TxKind, TxRecord, UnlockRequest,
-    UpdateSettingsRequest, WalletSettings, WalletSummary, DEFAULT_MWEB_FEE_SATS,
+    SendPreview, SendRequest, SendResult, SetTxLabelRequest, SyncResult, TxKind, TxRecord,
+    UnlockRequest, UpdateSettingsRequest, WalletSettings, WalletSummary, DEFAULT_MWEB_FEE_SATS,
 };
+use crate::labels;
 use crate::electrum::{self, BATCH_SIZE, MIN_FEE_RATE_SAT_VB, STOP_GAP};
 use crate::error::WalletError;
 use crate::meta::{self, WalletMeta};
@@ -446,6 +447,29 @@ impl WalletApp {
             show_fiat: state.show_fiat,
             use_explorer_fee_hints: state.use_explorer_fee_hints,
         })
+    }
+
+    /// True when `address` is a revealed BIP84 receive/change address that has been used.
+    /// MWEB stealth addresses always return `reused: false` (reuse is expected).
+    pub fn address_reuse_hint(&self, address: &str) -> Result<AddressReuseHint, WalletError> {
+        self.ensure_unlocked()?;
+        let guard = self.lock_state()?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        Ok(compute_address_reuse_hint(&state.wallet, address))
+    }
+
+    pub fn get_tx_labels(&self) -> Result<std::collections::HashMap<String, String>, WalletError> {
+        self.ensure_unlocked()?;
+        let guard = self.lock_state()?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        Ok(labels::read_labels(&state.data_dir)?.labels)
+    }
+
+    pub fn set_tx_label(&self, req: SetTxLabelRequest) -> Result<(), WalletError> {
+        self.ensure_unlocked()?;
+        let guard = self.lock_state()?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        labels::set_label(&state.data_dir, &req.txid, &req.label)
     }
 
     pub fn update_settings(&self, req: UpdateSettingsRequest) -> Result<(), WalletError> {
@@ -1153,6 +1177,48 @@ impl MemoryBackedApp {
         Ok(address)
     }
 
+    pub fn address_reuse_hint(&self, address: &str) -> Result<AddressReuseHint, WalletError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        Ok(compute_address_reuse_hint(&state.wallet, address))
+    }
+
+    pub fn get_tx_labels(&self) -> Result<std::collections::HashMap<String, String>, WalletError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        Ok(labels::read_labels(&state.data_dir)?.labels)
+    }
+
+    pub fn set_tx_label(&self, req: SetTxLabelRequest) -> Result<(), WalletError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        labels::set_label(&state.data_dir, &req.txid, &req.label)
+    }
+
+    /// Test helper: mark an external derivation index as used for reuse-detection tests.
+    pub fn mark_external_used(&self, index: u32) -> Result<(), WalletError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        state.wallet.mark_used(KeychainKind::External, index);
+        state
+            .wallet
+            .persist(&mut state.db)
+            .map_err(|e| WalletError::Persist(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn send(&self, req: SendRequest) -> Result<SendResult, WalletError> {
         // Minimal send for unit tests that don't hit the network: only build path errors.
         let mut guard = self
@@ -1755,6 +1821,47 @@ fn revealed_address_set(wallet: &PersistedWallet<Connection>) -> std::collection
         }
     }
     set
+}
+
+fn is_mweb_stealth_address(address: &str) -> bool {
+    let lower = address.trim().to_ascii_lowercase();
+    lower.starts_with("ltcmweb") || lower.starts_with("tmweb")
+}
+
+/// Used = revealed and not in `list_unused_addresses` for that keychain.
+fn used_revealed_addresses(
+    wallet: &PersistedWallet<Connection>,
+) -> std::collections::HashSet<String> {
+    let mut used = std::collections::HashSet::new();
+    for keychain in [KeychainKind::External, KeychainKind::Internal] {
+        let Some(last) = wallet.derivation_index(keychain) else {
+            continue;
+        };
+        let unused: std::collections::HashSet<String> = wallet
+            .list_unused_addresses(keychain)
+            .map(|info| info.address.to_string())
+            .collect();
+        for i in 0..=last {
+            let addr = wallet.peek_address(keychain, i).address.to_string();
+            if !unused.contains(&addr) {
+                used.insert(addr);
+            }
+        }
+    }
+    used
+}
+
+fn compute_address_reuse_hint(
+    wallet: &PersistedWallet<Connection>,
+    address: &str,
+) -> AddressReuseHint {
+    let address = address.trim();
+    if address.is_empty() || is_mweb_stealth_address(address) {
+        return AddressReuseHint { reused: false };
+    }
+    AddressReuseHint {
+        reused: used_revealed_addresses(wallet).contains(address),
+    }
 }
 
 fn build_summary(state: &mut WalletState) -> Result<WalletSummary, WalletError> {

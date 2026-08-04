@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tempfile::tempdir;
 use wallet_core::{
     CreateWalletRequest, MemoryBackedApp, MemoryStore, RestoreWalletRequest, SecretStore,
-    SendRequest, WalletError, WalletNetwork,
+    SendRequest, SetTxLabelRequest, WalletError, WalletNetwork,
 };
 
 fn with_secrets(secrets: Arc<dyn SecretStore>) -> MemoryBackedApp {
@@ -225,6 +225,66 @@ fn create_marks_needs_full_scan_in_meta() {
     let meta: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(meta_path).unwrap()).unwrap();
     assert_eq!(meta["needs_full_scan"], true);
+}
+
+#[test]
+fn address_reuse_hint_unused_used_and_mweb() {
+    let dir = tempdir().unwrap();
+    let app = with_secrets(Arc::new(MemoryStore::new()));
+    let created = app
+        .create(
+            dir.path(),
+            CreateWalletRequest {
+                network: WalletNetwork::Testnet,
+                electrum_url: None,
+            },
+        )
+        .expect("create");
+    let addr = created.summary.receive_address;
+
+    assert!(
+        !app.address_reuse_hint(&addr).expect("hint").reused,
+        "fresh unused receive address must not warn"
+    );
+    assert!(
+        !app.address_reuse_hint("ltcmweb1qqtestreuse")
+            .expect("mweb")
+            .reused,
+        "MWEB stealth must never warn"
+    );
+    assert!(!app.address_reuse_hint("tltc1qnotours").expect("foreign").reused);
+
+    app.mark_external_used(0).expect("mark used");
+    assert!(
+        app.address_reuse_hint(&addr).expect("hint after use").reused,
+        "marked-used receive address should warn"
+    );
+}
+
+#[test]
+fn tx_labels_round_trip_and_wipe() {
+    let dir = tempdir().unwrap();
+    let app = with_secrets(Arc::new(MemoryStore::new()));
+    app.create(
+        dir.path(),
+        CreateWalletRequest {
+            network: WalletNetwork::Testnet,
+            electrum_url: None,
+        },
+    )
+    .unwrap();
+
+    app.set_tx_label(SetTxLabelRequest {
+        txid: "deadbeef".into(),
+        label: " coffee ".into(),
+    })
+    .unwrap();
+    let labels = app.get_tx_labels().unwrap();
+    assert_eq!(labels.get("deadbeef").map(String::as_str), Some("coffee"));
+    assert!(dir.path().join("tx_labels.json").is_file());
+
+    app.wipe(dir.path()).unwrap();
+    assert!(!dir.path().join("tx_labels.json").is_file());
 }
 
 #[test]
