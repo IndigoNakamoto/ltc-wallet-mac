@@ -183,7 +183,11 @@ fn default_auto_lock_minutes() -> u32 {
     15
 }
 
-/// Electrum / peer settings.
+fn default_explorer_base_url() -> String {
+    crate::explorer::DEFAULT_EXPLORER_BASE_URL.to_string()
+}
+
+/// Electrum / peer / explorer settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalletSettings {
     pub electrum_url: String,
@@ -207,6 +211,15 @@ pub struct WalletSettings {
     /// Active MWEB key-derivation scheme (changing it requires an MWEB resync).
     #[serde(default)]
     pub mweb_scheme: MwebScheme,
+    /// Block explorer base URL (litview / self-hosted LRK).
+    #[serde(default = "default_explorer_base_url")]
+    pub explorer_base_url: String,
+    /// Show LTC/USD under the balance hero (fetched from the explorer API).
+    #[serde(default = "default_true")]
+    pub show_fiat: bool,
+    /// Show explorer fee-rate suggestion chips on the send form.
+    #[serde(default = "default_true")]
+    pub use_explorer_fee_hints: bool,
 }
 
 /// Request to update wallet settings.
@@ -227,6 +240,52 @@ pub struct UpdateSettingsRequest {
     pub litecoin_rpc_url: Option<String>,
     #[serde(default)]
     pub mweb_peers: Vec<String>,
+    #[serde(default = "default_explorer_base_url")]
+    pub explorer_base_url: String,
+    #[serde(default = "default_true")]
+    pub show_fiat: bool,
+    #[serde(default = "default_true")]
+    pub use_explorer_fee_hints: bool,
+}
+
+/// One input or output from explorer tx enrichment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxIo {
+    pub address: String,
+    pub value_sats: u64,
+    /// True when this address is one of the wallet's revealed SPKs (local match).
+    pub is_wallet: bool,
+}
+
+/// Confirmation status from the explorer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxStatus {
+    pub confirmed: bool,
+    pub block_height: Option<u32>,
+    pub block_hash: Option<String>,
+    pub block_time: Option<u64>,
+}
+
+/// Full transaction view from litview (`/api/tx/{txid}`), with local wallet tags.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TxEnrichment {
+    pub txid: String,
+    pub fee_sats: Option<u64>,
+    pub size: Option<u32>,
+    pub weight: Option<u32>,
+    pub status: TxStatus,
+    pub inputs: Vec<TxIo>,
+    pub outputs: Vec<TxIo>,
+}
+
+/// Suggested fee rates from litview (`/api/v1/fees/recommended`), sat/vB.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeeLadder {
+    pub fastest_sat_vb: u64,
+    pub half_hour_sat_vb: u64,
+    pub hour_sat_vb: u64,
+    pub economy_sat_vb: Option<u64>,
+    pub minimum_sat_vb: Option<u64>,
 }
 
 /// Combined transparent + MWEB balances (v0.2).

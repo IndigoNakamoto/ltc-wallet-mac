@@ -103,6 +103,38 @@ type WalletSettings = {
   litecoin_rpc_url: string | null;
   mweb_peers: string[];
   mweb_scheme: MwebScheme;
+  explorer_base_url: string;
+  show_fiat: boolean;
+  use_explorer_fee_hints: boolean;
+};
+
+type TxIo = {
+  address: string;
+  value_sats: number;
+  is_wallet: boolean;
+};
+
+type TxEnrichment = {
+  txid: string;
+  fee_sats: number | null;
+  size: number | null;
+  weight: number | null;
+  status: {
+    confirmed: boolean;
+    block_height: number | null;
+    block_hash: string | null;
+    block_time: number | null;
+  };
+  inputs: TxIo[];
+  outputs: TxIo[];
+};
+
+type FeeLadder = {
+  fastest_sat_vb: number;
+  half_hour_sat_vb: number;
+  hour_sat_vb: number;
+  economy_sat_vb: number | null;
+  minimum_sat_vb: number | null;
 };
 
 type MwebSyncProgress = {
@@ -189,6 +221,7 @@ const el = {
   syncDot: document.querySelector<HTMLElement>("#sync-dot")!,
   syncLabel: document.querySelector<HTMLElement>("#sync-label")!,
   balanceTotal: document.querySelector<HTMLElement>("#balance-total")!,
+  balanceFiat: document.querySelector<HTMLElement>("#balance-fiat")!,
   balanceSats: document.querySelector<HTMLElement>("#balance-sats")!,
   balanceConfirmed: document.querySelector<HTMLElement>("#balance-confirmed")!,
   balanceMweb: document.querySelector<HTMLElement>("#balance-mweb")!,
@@ -261,6 +294,12 @@ const el = {
   sendAddress: document.querySelector<HTMLInputElement>("#send-address")!,
   sendAmount: document.querySelector<HTMLInputElement>("#send-amount")!,
   sendDrain: document.querySelector<HTMLInputElement>("#send-drain")!,
+  feeChips: document.querySelector<HTMLElement>("#fee-chips")!,
+  feeChipRow: document.querySelector<HTMLElement>("#fee-chip-row")!,
+  sendFeeHint: document.querySelector<HTMLElement>("#send-fee-hint")!,
+  settingsExplorer: document.querySelector<HTMLInputElement>("#settings-explorer")!,
+  settingsShowFiat: document.querySelector<HTMLInputElement>("#settings-show-fiat")!,
+  settingsFeeHints: document.querySelector<HTMLInputElement>("#settings-fee-hints")!,
   settingsElectrum: document.querySelector<HTMLInputElement>("#settings-electrum")!,
   settingsValidateTls: document.querySelector<HTMLInputElement>("#settings-validate-tls")!,
   settingsPublicFallback: document.querySelector<HTMLInputElement>("#settings-public-fallback")!,
@@ -328,6 +367,135 @@ let txRecords: TxRecord[] = [];
 let autoSyncTimer: number | null = null;
 let mwebProgressTimer: number | null = null;
 let statusTimer: number | null = null;
+let showFiat = true;
+let useExplorerFeeHints = true;
+let spotPriceUsd: number | null = null;
+let lastTotalSats = 0;
+let selectedFeeRateSatVb: number | null = null;
+const txEnrichmentCache = new Map<string, TxEnrichment>();
+
+function isChainTxid(id: string): boolean {
+  return /^[0-9a-fA-F]{64}$/.test(id.trim());
+}
+
+async function openExplorerForTxid(txid: string) {
+  if (!isChainTxid(txid)) {
+    setStatus("This id is not a transparent transaction — nothing to open in the explorer.");
+    return;
+  }
+  try {
+    const url = await invoke<string>("explorer_tx_url", { txid });
+    await invoke("open_explorer_url", { url });
+  } catch (e) {
+    setError(String(e));
+  }
+}
+
+function formatUsd(amount: number): string {
+  return amount.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function renderFiat() {
+  if (!showFiat || spotPriceUsd == null || !Number.isFinite(spotPriceUsd)) {
+    el.balanceFiat.hidden = true;
+    el.balanceFiat.textContent = "";
+    return;
+  }
+  const usd = (lastTotalSats / 100_000_000) * spotPriceUsd;
+  el.balanceFiat.hidden = false;
+  el.balanceFiat.textContent = `≈ ${formatUsd(usd)}`;
+}
+
+async function refreshSpotPrice() {
+  if (!showFiat || currentPhase !== "ready") return;
+  try {
+    spotPriceUsd = await invoke<number>("fetch_spot_price");
+    renderFiat();
+  } catch {
+    /* soft-fail: keep last price or hide */
+  }
+}
+
+function buildIoSection(title: string, items: TxIo[]): HTMLElement {
+  const section = document.createElement("div");
+  section.className = "tx-io";
+  const heading = document.createElement("h4");
+  heading.textContent = title;
+  const list = document.createElement("ul");
+  list.className = "tx-io-list";
+  if (items.length === 0) {
+    const li = document.createElement("li");
+    li.textContent = "None";
+    list.appendChild(li);
+  } else {
+    for (const io of items) {
+      const li = document.createElement("li");
+      if (io.is_wallet) li.classList.add("wallet");
+      const addr = document.createElement("span");
+      addr.className = "addr";
+      addr.textContent = io.address
+        ? io.is_wallet
+          ? `${io.address} (yours)`
+          : io.address
+        : "(no address)";
+      const amt = document.createElement("span");
+      amt.className = "amt";
+      amt.textContent = formatLtc(io.value_sats);
+      li.append(addr, amt);
+      list.appendChild(li);
+    }
+  }
+  section.append(heading, list);
+  return section;
+}
+
+function renderFeeChips(ladder: FeeLadder | null) {
+  el.feeChipRow.textContent = "";
+  if (!useExplorerFeeHints || !ladder) {
+    el.feeChips.hidden = true;
+    return;
+  }
+  el.feeChips.hidden = false;
+  const chips: [string, number][] = [
+    ["Fast", ladder.fastest_sat_vb],
+    ["~30m", ladder.half_hour_sat_vb],
+    ["~1h", ladder.hour_sat_vb],
+  ];
+  for (const [label, rate] of chips) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "fee-chip";
+    btn.textContent = `${label} · ${rate} sat/vB`;
+    btn.setAttribute("aria-pressed", selectedFeeRateSatVb === rate ? "true" : "false");
+    btn.addEventListener("click", () => {
+      selectedFeeRateSatVb = selectedFeeRateSatVb === rate ? null : rate;
+      renderFeeChips(ladder);
+      el.sendFeeHint.textContent =
+        selectedFeeRateSatVb != null
+          ? `Using ${selectedFeeRateSatVb} sat/vB from explorer suggestions.`
+          : "Network fee is calculated automatically.";
+    });
+    el.feeChipRow.appendChild(btn);
+  }
+}
+
+async function refreshFeeLadder() {
+  if (!useExplorerFeeHints || currentPhase !== "ready") {
+    renderFeeChips(null);
+    return;
+  }
+  try {
+    const ladder = await invoke<FeeLadder>("fetch_fee_ladder");
+    renderFeeChips(ladder);
+  } catch {
+    renderFeeChips(null);
+  }
+}
 
 function formatLtc(sats: number): string {
   const whole = Math.trunc(sats / 100_000_000);
@@ -430,6 +598,7 @@ function setCard(next: Card | null) {
   }
   applyCardState();
   el.sheetBody.scrollTop = 0;
+  if (next === "send") void refreshFeeLadder();
 }
 
 for (const view of VIEWS) {
@@ -733,21 +902,32 @@ async function showResult(opts: {
   message: string;
   rows: DetailRow[];
   copy?: { value: string; label: string; toast: string };
+  explorerTxid?: string;
 }) {
-  const actions: ModalAction[] = [];
-  if (opts.copy) actions.push({ id: "copy", label: opts.copy.label, kind: "secondary" });
-  actions.push({ id: "done", label: "Done", kind: "primary" });
-  const result = await openModal({
-    title: opts.title,
-    wide: true,
-    build: (body) => {
-      appendParagraph(body, opts.message, "lede");
-      body.appendChild(buildDetailList(opts.rows));
-    },
-    actions,
-    focus: () => el.modalActions.querySelector<HTMLElement>('[data-action="done"]'),
-  });
-  if (result === "copy" && opts.copy) await copyText(opts.copy.value, opts.copy.toast);
+  for (;;) {
+    const actions: ModalAction[] = [];
+    if (opts.explorerTxid && isChainTxid(opts.explorerTxid)) {
+      actions.push({ id: "explore", label: "View on litview", kind: "secondary" });
+    }
+    if (opts.copy) actions.push({ id: "copy", label: opts.copy.label, kind: "secondary" });
+    actions.push({ id: "done", label: "Done", kind: "primary" });
+    const result = await openModal({
+      title: opts.title,
+      wide: true,
+      build: (body) => {
+        appendParagraph(body, opts.message, "lede");
+        body.appendChild(buildDetailList(opts.rows));
+      },
+      actions,
+      focus: () => el.modalActions.querySelector<HTMLElement>('[data-action="done"]'),
+    });
+    if (result === "explore" && opts.explorerTxid) {
+      await openExplorerForTxid(opts.explorerTxid);
+      continue;
+    }
+    if (result === "copy" && opts.copy) await copyText(opts.copy.value, opts.copy.toast);
+    return;
+  }
 }
 
 /**
@@ -984,7 +1164,9 @@ function renderSummary(s: WalletSummary) {
   el.networkBadge.textContent = s.network;
   el.balanceTotal.classList.remove("skeleton");
   el.balanceTotal.textContent = formatLtc(s.total_sats);
+  lastTotalSats = s.total_sats;
   el.balanceSats.textContent = formatLitoshis(s.total_sats);
+  renderFiat();
   el.balanceConfirmed.textContent = formatLtc(s.confirmed_sats);
   el.balanceTip.textContent = s.tip_height.toLocaleString("en-US");
   el.address.textContent = s.receive_address;
@@ -1021,6 +1203,8 @@ function renderCombined(c: CombinedSummary) {
   const grandTotal = c.transparent.total_sats + c.mweb_total_sats;
   el.balanceTotal.textContent = formatLtc(grandTotal);
   el.balanceSats.textContent = formatLitoshis(grandTotal);
+  lastTotalSats = grandTotal;
+  renderFiat();
   setMwebVisible(true);
   let mwebText = formatLtc(c.mweb_total_sats);
   if (c.mweb_immature_sats > 0) {
@@ -1177,11 +1361,36 @@ async function openTxDetail(index: number) {
     ]);
     rows.push(["Transaction ID", tx.txid, true]);
 
+    let enrichment: TxEnrichment | null = null;
+    if (isChainTxid(tx.txid)) {
+      enrichment = txEnrichmentCache.get(tx.txid) ?? null;
+      if (!enrichment) {
+        try {
+          enrichment = await invoke<TxEnrichment>("fetch_tx_detail", { txid: tx.txid });
+          txEnrichmentCache.set(tx.txid, enrichment);
+        } catch {
+          enrichment = null;
+        }
+      }
+      if (enrichment?.fee_sats != null && tx.fee_sats == null) {
+        rows.splice(
+          rows.findIndex((r) => r[0] === "Fee"),
+          1,
+          ["Fee", `${enrichment.fee_sats.toLocaleString("en-US")} litoshis`],
+        );
+      }
+      if (enrichment?.status.block_hash) {
+        rows.push(["Block hash", enrichment.status.block_hash, true]);
+      }
+    }
+
     const hasPrev = at > 0;
     const hasNext = at < txRecords.length - 1;
+    const canExplore = isChainTxid(tx.txid);
     const actions: ModalAction[] = [];
     if (hasPrev) actions.push({ id: "prev", label: "‹ Prev", kind: "ghost", nav: true });
     if (hasNext) actions.push({ id: "next", label: "Next ›", kind: "ghost", nav: true });
+    if (canExplore) actions.push({ id: "explore", label: "View on litview", kind: "secondary" });
     actions.push({ id: "copy", label: "Copy ID", kind: "secondary" });
     actions.push({ id: "close", label: "Close", kind: "primary" });
 
@@ -1194,6 +1403,18 @@ async function openTxDetail(index: number) {
         amount.className = dir === "in" ? "detail-amount in" : "detail-amount";
         amount.textContent = formatSignedLtc(tx);
         body.append(amount, buildDetailList(rows));
+        if (enrichment) {
+          body.append(
+            buildIoSection("Inputs", enrichment.inputs),
+            buildIoSection("Outputs", enrichment.outputs),
+          );
+        } else if (canExplore) {
+          appendParagraph(
+            body,
+            "Could not load vin/vout from the explorer. Wallet-local details above are still valid.",
+            "hint",
+          );
+        }
       },
       actions,
       focus: () => el.modalActions.querySelector<HTMLElement>('[data-action="close"]'),
@@ -1214,6 +1435,10 @@ async function openTxDetail(index: number) {
     }
     if (result === "next") {
       at += 1;
+      continue;
+    }
+    if (result === "explore") {
+      await openExplorerForTxid(tx.txid);
       continue;
     }
     if (result === "copy") await copyText(tx.txid, "Transaction ID copied.");
@@ -1248,6 +1473,11 @@ async function refreshCombined() {
 async function loadSettings() {
   try {
     const s = await invoke<WalletSettings>("get_settings");
+    el.settingsExplorer.value = s.explorer_base_url || "https://litview.space";
+    el.settingsShowFiat.checked = s.show_fiat ?? true;
+    el.settingsFeeHints.checked = s.use_explorer_fee_hints ?? true;
+    showFiat = s.show_fiat ?? true;
+    useExplorerFeeHints = s.use_explorer_fee_hints ?? true;
     el.settingsElectrum.value = s.electrum_url;
     el.settingsValidateTls.checked = s.electrum_validate_domain ?? true;
     el.settingsPublicFallback.checked = s.electrum_use_public_fallback ?? true;
@@ -1313,6 +1543,7 @@ function startAutoSync() {
   autoSyncTimer = window.setInterval(() => {
     if (currentPhase !== "ready" || syncing || sending) return;
     void runSync({ quiet: true });
+    void refreshSpotPrice();
   }, AUTO_SYNC_MS);
 }
 
@@ -1394,6 +1625,8 @@ async function enterReady() {
   await refreshCombined();
   await refreshHistory();
   await loadSettings();
+  void refreshSpotPrice();
+  void refreshFeeLadder();
   void runSync({ quiet: false });
 }
 
@@ -1818,10 +2051,11 @@ el.sendForm.addEventListener("submit", async (event) => {
   setError(null);
   updateBusyUi();
   showLoading("Calculating fee…");
+  const fee_rate_sat_vb = selectedFeeRateSatVb ?? undefined;
   let preview: SendPreview;
   try {
     preview = await invoke<SendPreview>("preview_send", {
-      req: { address, amount_sats, drain },
+      req: { address, amount_sats, drain, fee_rate_sat_vb },
     });
   } catch (e) {
     setError(String(e));
@@ -1834,6 +2068,8 @@ el.sendForm.addEventListener("submit", async (event) => {
   }
 
   const amountLabel = formatLtc(preview.amount_sats);
+  const feeSource =
+    selectedFeeRateSatVb != null ? "explorer suggestion" : "estimated";
   const confirmed = await openConfirm({
     title: "Review transaction",
     message:
@@ -1844,7 +2080,7 @@ el.sendForm.addEventListener("submit", async (event) => {
       ["Network fee", formatLtc(preview.fee_sats)],
       ...(drain ? ([["Emptying", "All transparent funds"]] as DetailRow[]) : []),
     ],
-    detail: `Fee rate ${preview.fee_rate_sat_vb} sat/vB (estimated).`,
+    detail: `Fee rate ${preview.fee_rate_sat_vb} sat/vB (${feeSource}).`,
     confirmLabel: drain ? "Send all now" : "Send now",
   });
   if (!confirmed) {
@@ -1879,6 +2115,9 @@ el.sendForm.addEventListener("submit", async (event) => {
   el.sendAddress.value = "";
   el.sendAmount.value = "";
   el.sendDrain.checked = false;
+  selectedFeeRateSatVb = null;
+  el.sendFeeHint.textContent = "Network fee is calculated automatically.";
+  void refreshFeeLadder();
   updateBusyUi();
 
   void runSync({ quiet: false });
@@ -1892,6 +2131,7 @@ el.sendForm.addEventListener("submit", async (event) => {
       ["Transaction ID", result.txid, true],
     ],
     copy: { value: result.txid, label: "Copy ID", toast: "Transaction ID copied." },
+    explorerTxid: result.txid,
   });
 });
 
@@ -1929,9 +2169,27 @@ el.btnSaveSettings.addEventListener("click", async () => {
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
+        explorer_base_url: el.settingsExplorer.value.trim() || "https://litview.space",
+        show_fiat: el.settingsShowFiat.checked,
+        use_explorer_fee_hints: el.settingsFeeHints.checked,
       },
     });
     autoLockMinutes = autoLock;
+    showFiat = el.settingsShowFiat.checked;
+    useExplorerFeeHints = el.settingsFeeHints.checked;
+    if (!showFiat) {
+      spotPriceUsd = null;
+      renderFiat();
+    } else {
+      void refreshSpotPrice();
+    }
+    if (!useExplorerFeeHints) {
+      selectedFeeRateSatVb = null;
+      renderFeeChips(null);
+      el.sendFeeHint.textContent = "Network fee is calculated automatically.";
+    } else {
+      void refreshFeeLadder();
+    }
     setStatus("Settings saved.", "success");
   } catch (e) {
     setError(String(e));
@@ -2032,6 +2290,7 @@ el.btnPegin.addEventListener("click", async () => {
       ["Transaction ID", result.txid, true],
     ],
     copy: { value: result.txid, label: "Copy ID", toast: "Transaction ID copied." },
+    explorerTxid: result.txid,
   });
 });
 

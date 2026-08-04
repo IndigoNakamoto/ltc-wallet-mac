@@ -313,6 +313,7 @@
               <div class="hero-inner">
                 <span class="hero-label">Total balance</span>
                 <p class="balance-total skeleton" id="balance-total">0.00000000 LTC</p>
+                <p class="balance-fiat" id="balance-fiat" hidden></p>
                 <p class="balance-sats" id="balance-sats">(0 litoshis)</p>
                 <p class="balance-note" id="balance-pending" hidden></p>
 
@@ -406,6 +407,10 @@
                         <input id="send-drain" type="checkbox" />
                         <span>Send all — empty the public balance</span>
                       </label>
+                      <div class="fee-chips" id="fee-chips" hidden>
+                        <span class="field-label">Fee rate</span>
+                        <div class="fee-chip-row" id="fee-chip-row" role="group" aria-label="Suggested fee rates"></div>
+                      </div>
                       <p class="hint" id="send-fee-hint">Network fee is calculated automatically.</p>
                       <div class="row">
                         <button type="submit" id="btn-send" class="btn btn-primary">Review and send</button>
@@ -623,6 +628,33 @@
           </section>
 
           <section id="view-settings" class="view" role="tabpanel" aria-labelledby="nav-settings" hidden>
+            <div class="card">
+              <h3>Explorer</h3>
+              <label class="field">
+                <span class="field-label">Explorer base URL</span>
+                <input
+                  id="settings-explorer"
+                  class="mono"
+                  type="text"
+                  spellcheck="false"
+                  placeholder="https://litview.space"
+                />
+                <span class="hint">
+                  Default is litview.space (first-party LRK). Opening a transaction or loading
+                  vin/vout details reveals your IP and that txid to this host. Address lists are
+                  never uploaded. Spot price and fee hints reveal IP only.
+                </span>
+              </label>
+              <label class="check">
+                <input id="settings-show-fiat" type="checkbox" />
+                <span>Show LTC/USD under balance</span>
+              </label>
+              <label class="check">
+                <input id="settings-fee-hints" type="checkbox" />
+                <span>Show explorer fee-rate suggestions on send</span>
+              </label>
+            </div>
+
             <div class="card">
               <h3>Connection</h3>
               <label class="field">

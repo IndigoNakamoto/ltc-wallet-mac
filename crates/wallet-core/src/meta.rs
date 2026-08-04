@@ -36,6 +36,10 @@ fn default_mweb_peers() -> Vec<String> {
     vec!["127.0.0.1:9333".into()]
 }
 
+fn default_explorer_base_url() -> String {
+    crate::explorer::DEFAULT_EXPLORER_BASE_URL.to_string()
+}
+
 /// Lightweight metadata stored beside the BDK sqlite DB (never secrets).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WalletMeta {
@@ -70,6 +74,15 @@ pub struct WalletMeta {
     /// default to Litecoin Core's layout.
     #[serde(default)]
     pub mweb_scheme: crate::dto::MwebScheme,
+    /// Block explorer / LRK base URL (default litview.space).
+    #[serde(default = "default_explorer_base_url")]
+    pub explorer_base_url: String,
+    /// Show LTC/USD under the balance (explorer price API).
+    #[serde(default = "default_true")]
+    pub show_fiat: bool,
+    /// Show explorer fee-rate chips on send.
+    #[serde(default = "default_true")]
+    pub use_explorer_fee_hints: bool,
 }
 
 impl WalletMeta {
@@ -86,6 +99,9 @@ impl WalletMeta {
             litecoin_rpc_url: None,
             mweb_peers: default_mweb_peers(),
             mweb_scheme: crate::dto::MwebScheme::default(),
+            explorer_base_url: default_explorer_base_url(),
+            show_fiat: true,
+            use_explorer_fee_hints: true,
         }
     }
 }

@@ -9,6 +9,7 @@ mod discovery;
 mod dto;
 mod electrum;
 mod error;
+pub mod explorer;
 mod meta;
 mod mweb;
 mod mweb_history;
@@ -20,12 +21,14 @@ mod seed;
 pub use app::{MemoryBackedApp, WalletApp};
 pub use seed::{derive_preview, DerivePreview, MasterSecret, MwebSchemePreview};
 pub use dto::{
-    CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate,
+    CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate, FeeLadder,
     MigrateEncryptRequest, MwebBroadcastResult, MwebScheme, MwebSendPreview, MwebSendRequest,
     MwebSyncProgress, PeginPreview, PeginRequest, PeginResult, PegoutPreview, PegoutRequest,
-    RestoreWalletRequest, SendPreview, SendRequest, SendResult, SyncResult, TxKind, TxRecord,
-    UnlockRequest, UpdateSettingsRequest, WalletSettings, WalletSummary, DEFAULT_MWEB_FEE_SATS,
+    RestoreWalletRequest, SendPreview, SendRequest, SendResult, SyncResult, TxEnrichment, TxIo,
+    TxKind, TxRecord, TxStatus, UnlockRequest, UpdateSettingsRequest, WalletSettings,
+    WalletSummary, DEFAULT_MWEB_FEE_SATS,
 };
+pub use explorer::{DEFAULT_EXPLORER_BASE_URL, is_chain_txid};
 pub use error::WalletError;
 pub use network::WalletNetwork;
 pub use secrets::{

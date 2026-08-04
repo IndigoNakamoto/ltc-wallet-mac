@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, State};
 use wallet_core::{
-    CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate,
+    CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate, FeeLadder,
     MigrateEncryptRequest, MwebBroadcastResult, MwebSendPreview, MwebSendRequest, MwebSyncProgress,
     PeginPreview, PeginRequest, PeginResult, PegoutPreview, PegoutRequest, RestoreWalletRequest,
-    SendPreview, SendRequest, SendResult, SyncResult, TxRecord, UnlockRequest,
+    SendPreview, SendRequest, SendResult, SyncResult, TxEnrichment, TxRecord, UnlockRequest,
     UpdateSettingsRequest, WalletApp, WalletSettings, WalletSummary,
 };
 
@@ -311,6 +311,86 @@ async fn update_settings(
         .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn explorer_tx_url(
+    state: State<'_, Arc<WalletApp>>,
+    txid: String,
+) -> Result<String, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.explorer_tx_url(&txid).map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn explorer_block_url(
+    state: State<'_, Arc<WalletApp>>,
+    block_hash: String,
+) -> Result<String, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || {
+        wallet.explorer_block_url(&block_hash).map_err(map_err)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Open an http(s) URL in the system browser (never navigates the WebView).
+#[tauri::command]
+async fn open_explorer_url(url: String) -> Result<(), String> {
+    wallet_core::explorer::validate_open_url(&url).map_err(map_err)?;
+    open_url_in_browser(&url)
+}
+
+fn open_url_in_browser(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        return Err("opening URLs is not supported on this platform".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn fetch_tx_detail(
+    state: State<'_, Arc<WalletApp>>,
+    txid: String,
+) -> Result<TxEnrichment, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.fetch_tx_detail(&txid).map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn fetch_spot_price(state: State<'_, Arc<WalletApp>>) -> Result<f64, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.fetch_spot_price().map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn fetch_fee_ladder(state: State<'_, Arc<WalletApp>>) -> Result<FeeLadder, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.fetch_fee_ladder().map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Phrase the user must type before a wipe is executed. Checked here at the
 /// IPC boundary (not only in the UI) so a scripted or compromised webview
 /// cannot destroy the wallet with a bare `invoke("wipe_wallet")`.
@@ -373,6 +453,12 @@ pub fn run() {
             mweb_sync_progress,
             get_settings,
             update_settings,
+            explorer_tx_url,
+            explorer_block_url,
+            open_explorer_url,
+            fetch_tx_detail,
+            fetch_spot_price,
+            fetch_fee_ladder,
             wipe_wallet,
         ])
         .run(tauri::generate_context!())

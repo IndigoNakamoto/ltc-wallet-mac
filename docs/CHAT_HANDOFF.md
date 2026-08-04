@@ -37,7 +37,8 @@ MWEB peers default to `127.0.0.1:9333` (user-configurable). Electrum TLS certifi
 - `sync` (transparent + best-effort MWEB tip sync)
 - `summary` / `combined_summary` / `receive_address` / `mweb_receive_address`
 - `transactions` / `send` (optional `drain`)
-- `settings` / `update_settings`
+- `settings` / `update_settings` (includes `explorer_base_url`, `show_fiat`, `use_explorer_fee_hints`)
+- `explorer_tx_url` / `open_explorer_url` / `fetch_tx_detail` / `fetch_spot_price` / `fetch_fee_ladder`
 - `pegin` / `mweb_send` / `pegout` / `resync_mweb`
 
 ## Peg-in UX model
@@ -56,6 +57,12 @@ Boot → Unlock | Migrate | Onboarding → Mnemonic backup → Home (balance, QR
 4. ~~Packaging prep: icon, bundle metadata, entitlements, release docs~~
 5. ~~MWEB store + tip seam + peg-in/send/pegout commands + UI~~
 6. Live MWEB E2E against archive peer + RPC; notarized ship
+
+## Litview / LRK
+
+First-party explorer at [litview.space](https://litview.space). Design and privacy
+matrix: [`docs/LITVIEW.md`](LITVIEW.md). Deep links + optional enrichment/price/fees
+via Rust `ureq`; never scan wallet addresses against litview.
 
 ## Out of scope (still)
 

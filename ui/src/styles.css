@@ -657,6 +657,7 @@ code {
   font-size: clamp(1.3rem, 3vw, 1.65rem);
 }
 
+.view-balance[data-sheet="expanded"] .balance-fiat,
 .view-balance[data-sheet="expanded"] .balance-sats,
 .view-balance[data-sheet="expanded"] .balance-note,
 .view-balance[data-sheet="expanded"] .hero-stats {
@@ -678,6 +679,13 @@ code {
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
   transition: font-size 0.2s var(--ease);
+}
+
+.balance-fiat {
+  margin-top: 0.2rem;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
 }
 
 .balance-sats {
@@ -1562,6 +1570,84 @@ textarea {
 .detail-value.mono {
   font-family: var(--font-mono);
   font-size: 0.78rem;
+}
+
+.tx-io {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.85rem;
+}
+
+.tx-io h4 {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 560;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tx-io-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.tx-io-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+  font-size: 0.8rem;
+}
+
+.tx-io-list li.wallet {
+  outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.tx-io-list .addr {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  word-break: break-all;
+}
+
+.tx-io-list .amt {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.fee-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.fee-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.fee-chip {
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  color: var(--text-1);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.65rem;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.fee-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* ---------------------------------------------------------------------------

@@ -46,6 +46,9 @@ struct WalletState {
     litecoin_rpc_url: Option<String>,
     mweb_peers: Vec<String>,
     mweb_scheme: MwebScheme,
+    explorer_base_url: String,
+    show_fiat: bool,
+    use_explorer_fee_hints: bool,
     data_dir: PathBuf,
     needs_full_scan: bool,
     needs_mweb_scan: bool,
@@ -67,6 +70,9 @@ fn meta_from_state(state: &WalletState) -> WalletMeta {
         litecoin_rpc_url: state.litecoin_rpc_url.clone(),
         mweb_peers: state.mweb_peers.clone(),
         mweb_scheme: state.mweb_scheme,
+        explorer_base_url: state.explorer_base_url.clone(),
+        show_fiat: state.show_fiat,
+        use_explorer_fee_hints: state.use_explorer_fee_hints,
     }
 }
 
@@ -268,6 +274,9 @@ impl WalletApp {
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
             mweb_scheme: meta.mweb_scheme,
+            explorer_base_url: meta.explorer_base_url,
+            show_fiat: meta.show_fiat,
+            use_explorer_fee_hints: meta.use_explorer_fee_hints,
             data_dir: data_dir.to_path_buf(),
             needs_full_scan: meta.needs_full_scan,
             needs_mweb_scan: meta.needs_mweb_scan,
@@ -398,12 +407,16 @@ impl WalletApp {
             litecoin_rpc_url: state.litecoin_rpc_url.clone(),
             mweb_peers: state.mweb_peers.clone(),
             mweb_scheme: state.mweb_scheme,
+            explorer_base_url: state.explorer_base_url.clone(),
+            show_fiat: state.show_fiat,
+            use_explorer_fee_hints: state.use_explorer_fee_hints,
         })
     }
 
     pub fn update_settings(&self, req: UpdateSettingsRequest) -> Result<(), WalletError> {
         self.ensure_unlocked()?;
         meta::validate_electrum_url(&req.electrum_url)?;
+        let explorer_base_url = crate::explorer::normalize_base_url(&req.explorer_base_url)?;
         let mut guard = self.lock_state()?;
         let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
         state.electrum_url = req.electrum_url.trim().to_string();
@@ -422,8 +435,68 @@ impl WalletApp {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
+        state.explorer_base_url = explorer_base_url;
+        state.show_fiat = req.show_fiat;
+        state.use_explorer_fee_hints = req.use_explorer_fee_hints;
         meta::write_meta(&state.data_dir, &meta_from_state(state))?;
         Ok(())
+    }
+
+    /// Build a litview `/tx/{txid}` URL (no network).
+    pub fn explorer_tx_url(&self, txid: &str) -> Result<String, WalletError> {
+        self.ensure_unlocked()?;
+        let guard = self.lock_state()?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        crate::explorer::tx_url(&state.explorer_base_url, txid)
+    }
+
+    /// Build a litview `/block/{hash}` URL (no network).
+    pub fn explorer_block_url(&self, block_hash: &str) -> Result<String, WalletError> {
+        self.ensure_unlocked()?;
+        let guard = self.lock_state()?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        crate::explorer::block_url(&state.explorer_base_url, block_hash)
+    }
+
+    /// Fetch tx details from the explorer; mark wallet IO locally.
+    pub fn fetch_tx_detail(&self, txid: &str) -> Result<crate::dto::TxEnrichment, WalletError> {
+        self.ensure_unlocked()?;
+        let (base, addresses) = {
+            let guard = self.lock_state()?;
+            let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+            (
+                state.explorer_base_url.clone(),
+                revealed_address_set(&state.wallet),
+            )
+        };
+        crate::explorer::fetch_tx_detail(&base, txid, &addresses)
+    }
+
+    /// Spot LTC/USD from the explorer mempool price endpoint.
+    pub fn fetch_spot_price(&self) -> Result<f64, WalletError> {
+        self.ensure_unlocked()?;
+        let base = {
+            let guard = self.lock_state()?;
+            let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+            state.explorer_base_url.clone()
+        };
+        crate::explorer::fetch_spot_price(&base)
+    }
+
+    /// Fee ladder suggestions from the explorer.
+    pub fn fetch_fee_ladder(&self) -> Result<crate::dto::FeeLadder, WalletError> {
+        self.ensure_unlocked()?;
+        let base = {
+            let guard = self.lock_state()?;
+            let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+            if !state.use_explorer_fee_hints {
+                return Err(WalletError::Meta(
+                    "explorer fee hints are disabled in Settings".into(),
+                ));
+            }
+            state.explorer_base_url.clone()
+        };
+        crate::explorer::fetch_fee_ladder(&base)
     }
 
     pub fn sync(&self) -> Result<SyncResult, WalletError> {
@@ -879,6 +952,9 @@ impl WalletApp {
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
             mweb_scheme,
+            explorer_base_url: meta.explorer_base_url,
+            show_fiat: meta.show_fiat,
+            use_explorer_fee_hints: meta.use_explorer_fee_hints,
             data_dir: data_dir.to_path_buf(),
             needs_full_scan: meta.needs_full_scan,
             needs_mweb_scan: meta.needs_mweb_scan,
@@ -988,6 +1064,9 @@ impl MemoryBackedApp {
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
             mweb_scheme: meta.mweb_scheme,
+            explorer_base_url: meta.explorer_base_url,
+            show_fiat: meta.show_fiat,
+            use_explorer_fee_hints: meta.use_explorer_fee_hints,
             data_dir: data_dir.to_path_buf(),
             needs_full_scan: meta.needs_full_scan,
             needs_mweb_scan: meta.needs_mweb_scan,
@@ -1092,6 +1171,9 @@ impl MemoryBackedApp {
             litecoin_rpc_url: meta.litecoin_rpc_url,
             mweb_peers: meta.mweb_peers,
             mweb_scheme,
+            explorer_base_url: meta.explorer_base_url,
+            show_fiat: meta.show_fiat,
+            use_explorer_fee_hints: meta.use_explorer_fee_hints,
             data_dir: data_dir.to_path_buf(),
             needs_full_scan: meta.needs_full_scan,
             needs_mweb_scan: meta.needs_mweb_scan,
@@ -1613,6 +1695,19 @@ mod tests {
         assert_eq!(pending.height, None);
         assert_eq!(pending.confirmations, 0);
     }
+}
+
+/// Revealed external/internal addresses for local `is_wallet` tagging.
+fn revealed_address_set(wallet: &PersistedWallet<Connection>) -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    for keychain in [KeychainKind::External, KeychainKind::Internal] {
+        if let Some(last) = wallet.derivation_index(keychain) {
+            for i in 0..=last {
+                set.insert(wallet.peek_address(keychain, i).address.to_string());
+            }
+        }
+    }
+    set
 }
 
 fn build_summary(state: &mut WalletState) -> Result<WalletSummary, WalletError> {

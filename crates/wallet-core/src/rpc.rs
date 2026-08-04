@@ -96,7 +96,7 @@ pub fn normalize_rpc_url(url: &str) -> String {
 
 /// Strip `user:pass@` userinfo from any URL embedded in `msg` so RPC
 /// credentials never reach logs or UI error text.
-fn redact_userinfo(msg: &str) -> String {
+pub(crate) fn redact_userinfo(msg: &str) -> String {
     let mut out = String::with_capacity(msg.len());
     let mut rest = msg;
     while let Some(idx) = rest.find("://") {

@@ -57,6 +57,9 @@ pub enum WalletError {
     #[error("litecoin rpc error: {0}")]
     Rpc(String),
 
+    #[error("explorer error: {0}")]
+    Explorer(String),
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }
