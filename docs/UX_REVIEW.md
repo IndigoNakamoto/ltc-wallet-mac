@@ -313,28 +313,28 @@ Clustered by theme, ordered **P0 → P4**. Each item: user problem, proposed UX,
 
 Labelled against [`CHAT_HANDOFF.md`](CHAT_HANDOFF.md) out-of-scope and Guide chapters deferred on purpose.
 
-#### P4-1 — Contacts address book
+#### P4-1 — Contacts address book — **shipped**
 
 - **User problem:** Repeated payments and privacy labeling ([contacts patterns](https://bitcoin.design/guide/daily-spending-wallet/contacts/)).
 - **Proposed UX:** Named contacts with last-used address type (Public vs Private); pick on Send. Warn that transparent contacts link identity if reused carelessly.
 - **Acceptance criteria:** CRUD contacts; send prefill; no network sync of contacts.
-- **Dependencies:** **New wallet-core storage** (future architecture).
+- **Shipped:** Wipeable `contacts.json` (name + one address + Public/Private); Settings CRUD; Send Contacts picker prefills and switches segment.
 - **Non-goals:** BIP47 payment codes; social recovery; LNURL-style handles.
 
-#### P4-2 — Coin control
+#### P4-2 — Coin control — **shipped (Public)**
 
 - **User problem:** Advanced privacy/cost control ([coin selection](https://bitcoin.design/guide/how-it-works/coin-selection/)).
 - **Proposed UX:** Opt-in UTXO picker on Public send; freeze coins; labels on UTXOs. Private side only if MWEB store can list coins safely.
 - **Acceptance criteria:** Manual selection produces preview matching selected outpoints; default path remains automatic.
-- **Dependencies:** **wallet-core** `list_unspent` / freeze APIs (does not exist today). **Future architecture.**
+- **Shipped:** `list_unspent` / `set_utxo_locked`; `SendRequest.selected_outpoints` + Public “Choose coins”; no UTXO labels; no MWEB picker.
 - **Non-goals:** Making coin control default for beginners.
 
-#### P4-3 — History search, filter, export
+#### P4-3 — History search, filter, export — **shipped**
 
 - **User problem:** Long lists; accounting ([activity](https://bitcoin.design/guide/daily-spending-wallet/activity/)).
 - **Proposed UX:** Filter Public/Private/pending; search by note/txid; export CSV of non-secret fields.
 - **Acceptance criteria:** Filters combine with labels; export excludes mnemonic/passphrase.
-- **Dependencies:** UI + optional core export helper; better with P3-4 labels.
+- **Shipped:** History toolbar filters/search; CSV/JSON export via native save dialog (`export_history`).
 - **Non-goals:** Full accounting suite.
 
 #### P4-4 — Multi-wallet / accounts
@@ -371,7 +371,7 @@ Labelled against [`CHAT_HANDOFF.md`](CHAT_HANDOFF.md) out-of-scope and Guide cha
 | **P1** | Public/Private coach, maturity state, Swap fee / explorer copy | UI + existing DTOs |
 | **P2** | Units, BIP21, fee chips/custom, receive feedback | UI (+ optional thin core parse) |
 | **P3** | Hide balance, reuse warn, privacy panel, labels | Mix UI / small storage |
-| **P4** | Contacts, coin control, export, multi-wallet, HW, Tor | Future architecture |
+| **P4** | Contacts, coin control, export shipped; multi-wallet, HW, Tor deferred | Mixed / future architecture |
 
 ---
 
@@ -404,7 +404,7 @@ Product rules derived from the Guide + this wallet’s Litecoin MWEB reality:
 8. **Fiat / fee polling defaults:** Keep `show_fiat` and `use_explorer_fee_hints` default **on** (convenience) or default **off** (privacy-first)? ([`LITVIEW.md`](LITVIEW.md), [`SECURITY.md`](../SECURITY.md))
 9. **High-fee threshold:** Is 50% of amount the right warn bar for Litecoin fee markets, or should it be fiat-relative?
 10. **Tor priority:** When (if ever) to schedule P4-6 relative to notarized ship and MWEB E2E ([`CHAT_HANDOFF.md`](CHAT_HANDOFF.md) status)?
-11. **Contacts scope:** Names+addresses only, or also BIP21 payment links / Private stealth contacts in v1 of contacts?
+11. **Contacts scope:** ~~Names+addresses only, or also BIP21 payment links / Private stealth contacts in v1 of contacts?~~ **Decided:** name + one address + Public/Private type (shipped in P4-1).
 12. **Auto-lock:** Remains UI-enforced (today) or move timer into `wallet-core` for stronger guarantees?
 
 ---

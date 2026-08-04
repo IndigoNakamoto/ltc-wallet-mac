@@ -458,7 +458,12 @@
                   <div id="send-public" class="seg-panel" role="tabpanel" aria-labelledby="send-seg-public">
                     <form id="send-form" class="send-form">
                       <label class="field">
-                        <span class="field-label">Recipient address</span>
+                        <span class="field-label-row">
+                          <span class="field-label">Recipient address</span>
+                          <button type="button" id="btn-pick-contact-public" class="btn btn-ghost btn-sm">
+                            Contacts
+                          </button>
+                        </span>
                         <input
                           id="send-address"
                           class="mono"
@@ -483,6 +488,19 @@
                         <input id="send-drain" type="checkbox" />
                         <span>Send all — empty the public balance</span>
                       </label>
+                      <details class="coin-control" id="coin-control">
+                        <summary>Choose coins (advanced)</summary>
+                        <p class="hint">
+                          Optional. Pick which public coins to spend. Frozen coins are skipped by
+                          automatic selection. Not available with Send all.
+                        </p>
+                        <p class="hint mono" id="coin-control-sum" hidden></p>
+                        <ul id="utxo-list" class="utxo-list"></ul>
+                        <p class="hint" id="utxo-empty" hidden>No public coins yet.</p>
+                        <button type="button" id="btn-refresh-utxos" class="btn btn-ghost btn-sm">
+                          Refresh coins
+                        </button>
+                      </details>
                       <div class="fee-chips" id="fee-chips" hidden>
                         <span class="field-label">Fee rate</span>
                         <div class="fee-chip-row" id="fee-chip-row" role="group" aria-label="Suggested fee rates"></div>
@@ -508,7 +526,12 @@
                     <div class="send-form">
                       <p class="lede">Confidential transfer to another MWEB stealth address.</p>
                       <label class="field">
-                        <span class="field-label">Recipient (ltcmweb1…)</span>
+                        <span class="field-label-row">
+                          <span class="field-label">Recipient (ltcmweb1…)</span>
+                          <button type="button" id="btn-pick-contact-private" class="btn btn-ghost btn-sm">
+                            Contacts
+                          </button>
+                        </span>
                         <input
                           id="mweb-send-address"
                           class="mono"
@@ -734,7 +757,38 @@
 
           <section id="view-history" class="view" role="tabpanel" aria-labelledby="nav-history" hidden>
             <div class="card">
-              <h3>Transactions</h3>
+              <div class="sheet-head">
+                <h3>Transactions</h3>
+                <button type="button" id="btn-export-history" class="btn btn-ghost btn-sm" hidden>
+                  Export
+                </button>
+              </div>
+              <div class="history-toolbar" id="history-toolbar" hidden>
+                <label class="field">
+                  <span class="field-label">Search</span>
+                  <input
+                    id="history-search"
+                    type="search"
+                    placeholder="Note or transaction ID"
+                    autocomplete="off"
+                    spellcheck="false"
+                  />
+                </label>
+                <div class="filter-chips" role="group" aria-label="Filter transactions">
+                  <button type="button" class="filter-chip" data-filter="all" aria-pressed="true">
+                    All
+                  </button>
+                  <button type="button" class="filter-chip" data-filter="public" aria-pressed="false">
+                    Public
+                  </button>
+                  <button type="button" class="filter-chip" data-filter="private" aria-pressed="false">
+                    Private
+                  </button>
+                  <button type="button" class="filter-chip" data-filter="pending" aria-pressed="false">
+                    Pending
+                  </button>
+                </div>
+              </div>
               <ul id="tx-list" class="tx-list"></ul>
               <div class="empty" id="tx-empty">
                 <svg class="icon icon-lg" viewBox="0 0 24 24" aria-hidden="true">
@@ -848,6 +902,19 @@
                 <input id="settings-fee-hints" type="checkbox" />
                 <span>Show explorer fee-rate suggestions on send</span>
               </label>
+            </div>
+
+            <div class="card" id="contacts-card">
+              <div class="sheet-head">
+                <h3>Contacts</h3>
+                <button type="button" id="btn-contact-add" class="btn btn-ghost btn-sm">Add</button>
+              </div>
+              <p class="hint">
+                Names and addresses stay on this computer. Reusing a Public address can link payments
+                to a person — prefer a fresh transparent address when privacy matters.
+              </p>
+              <ul id="contacts-list" class="contacts-list"></ul>
+              <p class="hint" id="contacts-empty">No contacts yet.</p>
             </div>
 
             <div class="card" id="privacy-disclosure">

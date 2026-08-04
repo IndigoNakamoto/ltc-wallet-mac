@@ -39,6 +39,9 @@ MWEB peers default to `127.0.0.1:9333` (user-configurable). Electrum TLS certifi
 - `transactions` / `send` (optional `drain`)
 - `settings` / `update_settings` (includes `explorer_base_url`, `show_fiat`, `use_explorer_fee_hints`)
 - `explorer_tx_url` / `open_explorer_url` / `fetch_tx_detail` / `fetch_spot_price` / `fetch_fee_ladder`
+- `get_tx_labels` / `set_tx_label` / `export_history`
+- `list_contacts` / `upsert_contact` / `delete_contact`
+- `list_unspent` / `set_utxo_locked` (Public coin control; `SendRequest.selected_outpoints`)
 - `pegin` / `mweb_send` / `pegout` / `resync_mweb`
 
 ## Peg-in UX model
@@ -55,7 +58,8 @@ Boot → Unlock | Migrate | Onboarding → Mnemonic backup → verify quiz → H
 - **Done (P1):** Public/Private first-use coach (`ltc-mweb-coach-seen`); empty-wallet funding CTA → Public Receive; peg-in maturity as spendable vs maturing (+ unconfirmed private, History maturing pill); Swap dual-fee labels + MWEB “no explorer” success copy / kind-aware litview; progressive security checklist at ≥1 LTC (`ltc-security-checklist-dismissed`).
 - **Done (P2):** Display unit LTC|litoshis (`ltc-display-unit`, Settings + hero tap); Public BIP21 amount/label QR + copy payment link + Send URI parse; fee chips time labels + Economy + custom sat/vB + `estimate_fee` when explorer hints off; receive toast/history pulse + first-receive modal (`ltc-first-receive-seen`).
 - **Done (P3):** Hide balances (`ltc-hide-balances`, Settings + hero LTC→litoshis→hidden); send-side transparent reuse warn via `address_reuse_hint` (warn-only; Private never warns); Settings “What leaves this computer” panel; tx labels in wipeable `tx_labels.json` sidecar (confirm note + History/detail edit).
-- **Next (P4):** Contacts, coin control, history export, multi-wallet, hardware, Tor — future architecture.
+- **Done (P4 shippable):** History search/filter + CSV/JSON export; contacts (`contacts.json`, name + one address + Public/Private, Send picker); Public coin control (`list_unspent`, freeze, opt-in `selected_outpoints`).
+- **Next (P4 deferred):** Multi-wallet, hardware wallets, Tor/proxy — future architecture.
 
 ## Implementation status
 
@@ -69,6 +73,7 @@ Boot → Unlock | Migrate | Onboarding → Mnemonic backup → verify quiz → H
 8. UX P1 MWEB comprehension (coach, funding CTA, maturity, Swap fees/explorer, security checklist)
 9. UX P2 payment polish (units, BIP21, fee clarity, receive feedback)
 10. UX P3 privacy hardening (hide balance, reuse warn, disclosure, labels)
+11. UX P4 shippable (history search/export, contacts, Public coin control)
 
 ## Litview / LRK
 

@@ -1,15 +1,16 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 
 use tauri::{AppHandle, Manager, State};
 use wallet_core::{
-    AddressReuseHint, CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate,
-    FeeLadder, MigrateEncryptRequest, MwebBroadcastResult, MwebSendPreview, MwebSendRequest,
-    MwebSyncProgress, PeginPreview, PeginRequest, PeginResult, PegoutPreview, PegoutRequest,
-    RestoreWalletRequest, SendPreview, SendRequest, SendResult, SetTxLabelRequest, SyncResult,
-    TxEnrichment, TxRecord, UnlockRequest, UpdateSettingsRequest, WalletApp, WalletSettings,
-    WalletSummary,
+    AddressReuseHint, CombinedSummary, ContactRecord, CreateWalletRequest, CreateWalletResponse,
+    DeleteContactRequest, FeeEstimate, FeeLadder, HistoryExportFormat, MigrateEncryptRequest,
+    MwebBroadcastResult, MwebSendPreview, MwebSendRequest, MwebSyncProgress, PeginPreview,
+    PeginRequest, PeginResult, PegoutPreview, PegoutRequest, RestoreWalletRequest, SendPreview,
+    SendRequest, SendResult, SetTxLabelRequest, SetUtxoLockedRequest, SyncResult, TxEnrichment,
+    TxRecord, UnlockRequest, UpdateSettingsRequest, UpsertContactRequest, UtxoRecord, WalletApp,
+    WalletSettings, WalletSummary,
 };
 
 fn data_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -180,11 +181,82 @@ async fn set_tx_label(
 }
 
 #[tauri::command]
+async fn list_contacts(state: State<'_, Arc<WalletApp>>) -> Result<Vec<ContactRecord>, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.list_contacts().map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn upsert_contact(
+    state: State<'_, Arc<WalletApp>>,
+    req: UpsertContactRequest,
+) -> Result<ContactRecord, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.upsert_contact(req).map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn delete_contact(
+    state: State<'_, Arc<WalletApp>>,
+    req: DeleteContactRequest,
+) -> Result<(), String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.delete_contact(req).map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn list_transactions(state: State<'_, Arc<WalletApp>>) -> Result<Vec<TxRecord>, String> {
     let wallet = Arc::clone(&state);
     tauri::async_runtime::spawn_blocking(move || wallet.transactions().map_err(map_err))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Export history to a user-chosen file. Returns the path written, or `None` if cancelled.
+#[tauri::command]
+async fn export_history(
+    app: AppHandle,
+    state: State<'_, Arc<WalletApp>>,
+    format: String,
+) -> Result<Option<String>, String> {
+    let export_format = HistoryExportFormat::parse(&format).map_err(map_err)?;
+    let wallet = Arc::clone(&state);
+    let body = tauri::async_runtime::spawn_blocking(move || {
+        wallet.export_history(export_format).map_err(map_err)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    let default_name = export_format.default_filename().to_string();
+    let ext = export_format.extension().to_string();
+    let filter_name = match export_format {
+        HistoryExportFormat::Csv => "CSV",
+        HistoryExportFormat::Json => "JSON",
+    }
+    .to_string();
+
+    let (tx, rx) = mpsc::channel();
+    app.run_on_main_thread(move || {
+        let path = rfd::FileDialog::new()
+            .set_title("Export transaction history")
+            .set_file_name(&default_name)
+            .add_filter(&filter_name, &[&ext])
+            .save_file();
+        let _ = tx.send(path);
+    })
+    .map_err(|e| e.to_string())?;
+
+    let Some(path) = rx.recv().map_err(|e| e.to_string())? else {
+        return Ok(None);
+    };
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    Ok(Some(path.display().to_string()))
 }
 
 #[tauri::command]
@@ -207,6 +279,25 @@ async fn get_mweb_receive_address(state: State<'_, Arc<WalletApp>>) -> Result<St
 async fn estimate_fee(state: State<'_, Arc<WalletApp>>) -> Result<FeeEstimate, String> {
     let wallet = Arc::clone(&state);
     tauri::async_runtime::spawn_blocking(move || wallet.estimate_fee().map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn list_unspent(state: State<'_, Arc<WalletApp>>) -> Result<Vec<UtxoRecord>, String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.list_unspent().map_err(map_err))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_utxo_locked(
+    state: State<'_, Arc<WalletApp>>,
+    req: SetUtxoLockedRequest,
+) -> Result<(), String> {
+    let wallet = Arc::clone(&state);
+    tauri::async_runtime::spawn_blocking(move || wallet.set_utxo_locked(req).map_err(map_err))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -473,12 +564,18 @@ pub fn run() {
             get_summary,
             get_combined_summary,
             list_transactions,
+            export_history,
             address_reuse_hint,
             get_tx_labels,
             set_tx_label,
+            list_contacts,
+            upsert_contact,
+            delete_contact,
             get_receive_address,
             get_mweb_receive_address,
             estimate_fee,
+            list_unspent,
+            set_utxo_locked,
             preview_send,
             send_ltc,
             preview_pegin,

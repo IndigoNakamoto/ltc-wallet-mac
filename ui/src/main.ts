@@ -72,6 +72,25 @@ type PegoutPreview = {
 
 type TxKind = "transparent" | "pegin" | "pegout" | "mweb-send" | "mweb-receive";
 
+type ContactKind = "public" | "private";
+
+type ContactRecord = {
+  id: string;
+  name: string;
+  address: string;
+  kind: ContactKind;
+};
+
+type UtxoRecord = {
+  outpoint: string;
+  txid: string;
+  vout: number;
+  amount_sats: number;
+  keychain: string;
+  confirmations: number;
+  locked: boolean;
+};
+
 type TxRecord = {
   txid: string;
   net_sats: number;
@@ -331,6 +350,12 @@ const el = {
   txEmptyTitle: document.querySelector<HTMLElement>("#tx-empty-title")!,
   txEmptyHint: document.querySelector<HTMLElement>("#tx-empty-hint")!,
   btnFundReceiveHistory: document.querySelector<HTMLButtonElement>("#btn-fund-receive-history")!,
+  historyToolbar: document.querySelector<HTMLElement>("#history-toolbar")!,
+  historySearch: document.querySelector<HTMLInputElement>("#history-search")!,
+  historyFilterChips: Array.from(
+    document.querySelectorAll<HTMLButtonElement>(".filter-chip[data-filter]"),
+  ),
+  btnExportHistory: document.querySelector<HTMLButtonElement>("#btn-export-history")!,
   securityChecklist: document.querySelector<HTMLElement>("#security-checklist")!,
   securityChecklistList: document.querySelector<HTMLElement>("#security-checklist-list")!,
   btnSecurityChecklistDismiss: document.querySelector<HTMLButtonElement>(
@@ -358,8 +383,18 @@ const el = {
   migratePassLabel: document.querySelector<HTMLElement>("#migrate-pass-label")!,
   sendForm: document.querySelector<HTMLFormElement>("#send-form")!,
   sendAddress: document.querySelector<HTMLInputElement>("#send-address")!,
+  btnPickContactPublic: document.querySelector<HTMLButtonElement>("#btn-pick-contact-public")!,
+  btnPickContactPrivate: document.querySelector<HTMLButtonElement>("#btn-pick-contact-private")!,
+  contactsList: document.querySelector<HTMLUListElement>("#contacts-list")!,
+  contactsEmpty: document.querySelector<HTMLElement>("#contacts-empty")!,
+  btnContactAdd: document.querySelector<HTMLButtonElement>("#btn-contact-add")!,
   sendAmount: document.querySelector<HTMLInputElement>("#send-amount")!,
   sendDrain: document.querySelector<HTMLInputElement>("#send-drain")!,
+  coinControl: document.querySelector<HTMLDetailsElement>("#coin-control")!,
+  coinControlSum: document.querySelector<HTMLElement>("#coin-control-sum")!,
+  utxoList: document.querySelector<HTMLUListElement>("#utxo-list")!,
+  utxoEmpty: document.querySelector<HTMLElement>("#utxo-empty")!,
+  btnRefreshUtxos: document.querySelector<HTMLButtonElement>("#btn-refresh-utxos")!,
   feeChips: document.querySelector<HTMLElement>("#fee-chips")!,
   feeChipRow: document.querySelector<HTMLElement>("#fee-chip-row")!,
   feeCustomField: document.querySelector<HTMLElement>("#fee-custom-field")!,
@@ -442,6 +477,12 @@ let activeCard: Card | null = null;
 let syncState: SyncState = "idle";
 let lastTxid: string | null = null;
 let txRecords: TxRecord[] = [];
+type HistoryFilter = "all" | "public" | "private" | "pending";
+let historyFilter: HistoryFilter = "all";
+let historySearchQuery = "";
+let contactsCache: ContactRecord[] = [];
+let utxoCache: UtxoRecord[] = [];
+const selectedOutpoints = new Set<string>();
 /** Local notes keyed by txid/wtxid (never sent to litview). */
 let txLabels: Record<string, string> = {};
 let autoSyncTimer: number | null = null;
@@ -904,6 +945,61 @@ for (const card of CARDS) {
 }
 
 el.btnSeeAll.addEventListener("click", () => setView("history"));
+
+el.historySearch.addEventListener("input", () => {
+  historySearchQuery = el.historySearch.value;
+  renderHistoryFiltered();
+});
+
+for (const chip of el.historyFilterChips) {
+  chip.addEventListener("click", () => {
+    const next = chip.dataset.filter as HistoryFilter | undefined;
+    if (!next) return;
+    historyFilter = next;
+    for (const other of el.historyFilterChips) {
+      other.setAttribute("aria-pressed", String(other.dataset.filter === historyFilter));
+    }
+    renderHistoryFiltered();
+  });
+}
+
+el.btnExportHistory.addEventListener("click", () => void exportHistoryFlow());
+el.btnContactAdd.addEventListener("click", () => void contactEditorFlow(null));
+el.btnPickContactPublic.addEventListener("click", () => void pickContactFlow("public"));
+el.btnPickContactPrivate.addEventListener("click", () => void pickContactFlow("private"));
+
+async function exportHistoryFlow() {
+  const result = await openModal({
+    title: "Export history",
+    build: (body) => {
+      const p = document.createElement("p");
+      p.className = "lede";
+      p.textContent =
+        "Saves a local file of your transaction history, including amounts and notes. " +
+        "The file never includes your recovery phrase or wallet passphrase.";
+      const hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent =
+        "Export always includes full amounts even when balances are hidden on screen.";
+      body.append(p, hint);
+    },
+    actions: [
+      { id: "cancel", label: "Cancel", kind: "ghost" },
+      { id: "json", label: "Export JSON", kind: "secondary" },
+      { id: "csv", label: "Export CSV", kind: "primary" },
+    ],
+  });
+  if (result !== "csv" && result !== "json") return;
+  try {
+    showLoading("Exporting…");
+    const path = await invoke<string | null>("export_history", { format: result });
+    if (path) setStatus(`Exported to ${path}`, "success");
+  } catch (e) {
+    setStatus(String(e), "error");
+  } finally {
+    hideLoading();
+  }
+}
 
 /* ---------------------------------------------------------------------------
    Public/Private segmented toggles inside the Send, Receive and Swap cards
@@ -2207,6 +2303,22 @@ function formatSignedAmount(tx: TxRecord): string {
   return `${txDirection(tx) === "in" ? "+" : "−"}${formatAmountPlain(Math.abs(tx.net_sats))}`;
 }
 
+function isPrivateTxKind(kind: TxKind): boolean {
+  return kind === "pegin" || kind === "pegout" || kind === "mweb-send" || kind === "mweb-receive";
+}
+
+function filterHistoryRecords(txs: TxRecord[]): TxRecord[] {
+  const q = historySearchQuery.trim().toLowerCase();
+  return txs.filter((tx) => {
+    if (historyFilter === "public" && tx.kind !== "transparent") return false;
+    if (historyFilter === "private" && !isPrivateTxKind(tx.kind)) return false;
+    if (historyFilter === "pending" && tx.confirmations !== 0) return false;
+    if (!q) return true;
+    const note = (txLabels[tx.txid] ?? "").toLowerCase();
+    return tx.txid.toLowerCase().includes(q) || note.includes(q);
+  });
+}
+
 function buildTxRow(tx: TxRecord, index: number): HTMLLIElement {
   const dir = txDirection(tx);
 
@@ -2272,16 +2384,35 @@ function buildTxRow(tx: TxRecord, index: number): HTMLLIElement {
 
 function renderHistory(txs: TxRecord[]) {
   txRecords = txs;
-  el.txList.textContent = "";
   el.txListRecent.textContent = "";
-  el.txEmpty.hidden = txs.length > 0;
   el.txEmptyRecent.hidden = txs.length > 0;
   el.btnSeeAll.hidden = txs.length <= RECENT_TX_COUNT;
+  el.historyToolbar.hidden = txs.length === 0;
+  el.btnExportHistory.hidden = txs.length === 0;
   updateEmptyFundingState();
-  txs.forEach((tx, index) => el.txList.appendChild(buildTxRow(tx, index)));
   txs
     .slice(0, RECENT_TX_COUNT)
     .forEach((tx, index) => el.txListRecent.appendChild(buildTxRow(tx, index)));
+  renderHistoryFiltered();
+}
+
+function renderHistoryFiltered() {
+  const filtered = filterHistoryRecords(txRecords);
+  el.txList.textContent = "";
+  const hasAny = txRecords.length > 0;
+  const hasMatches = filtered.length > 0;
+  el.txEmpty.hidden = hasMatches;
+  if (!hasAny) {
+    updateEmptyFundingState();
+  } else if (!hasMatches) {
+    el.txEmptyTitle.textContent = "No matching transactions.";
+    el.txEmptyHint.hidden = true;
+    el.btnFundReceiveHistory.hidden = true;
+  }
+  filtered.forEach((tx) => {
+    const index = txRecords.findIndex((row) => row.txid === tx.txid);
+    el.txList.appendChild(buildTxRow(tx, index >= 0 ? index : 0));
+  });
 }
 
 /** Detail panel for one transaction; prev/next walk the cached list in place. */
@@ -2456,6 +2587,221 @@ async function refreshCombined() {
   }
 }
 
+function renderContactsList() {
+  el.contactsList.textContent = "";
+  el.contactsEmpty.hidden = contactsCache.length > 0;
+  for (const contact of contactsCache) {
+    const li = document.createElement("li");
+    li.className = "contact-row";
+
+    const main = document.createElement("div");
+    main.className = "contact-main";
+    const name = document.createElement("span");
+    name.className = "contact-name";
+    name.textContent = contact.name;
+    const meta = document.createElement("span");
+    meta.className = "contact-meta";
+    meta.textContent = contact.kind === "public" ? "Public" : "Private";
+    const addr = document.createElement("span");
+    addr.className = "contact-addr";
+    addr.textContent = contact.address;
+    main.append(name, meta, addr);
+
+    const actions = document.createElement("div");
+    actions.className = "contact-actions";
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "btn btn-ghost btn-sm";
+    editBtn.textContent = "Edit";
+    editBtn.addEventListener("click", () => void editContactFlow(contact));
+    const delBtn = document.createElement("button");
+    delBtn.type = "button";
+    delBtn.className = "btn btn-ghost btn-sm";
+    delBtn.textContent = "Delete";
+    delBtn.addEventListener("click", () => void deleteContactFlow(contact));
+    actions.append(editBtn, delBtn);
+
+    li.append(main, actions);
+    el.contactsList.appendChild(li);
+  }
+}
+
+async function refreshContacts() {
+  try {
+    contactsCache = (await invoke<ContactRecord[]>("list_contacts")) ?? [];
+  } catch {
+    contactsCache = [];
+  }
+  renderContactsList();
+}
+
+async function contactEditorFlow(existing: ContactRecord | null) {
+  let nameInput!: HTMLInputElement;
+  let addressInput!: HTMLInputElement;
+  let kindSelect!: HTMLSelectElement;
+  const result = await openModal({
+    title: existing ? "Edit contact" : "Add contact",
+    build: (body) => {
+      const nameField = document.createElement("label");
+      nameField.className = "field";
+      nameField.innerHTML = `<span class="field-label">Name</span>`;
+      nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.maxLength = 64;
+      nameInput.value = existing?.name ?? "";
+      nameInput.autocomplete = "off";
+      nameField.append(nameInput);
+
+      const addrField = document.createElement("label");
+      addrField.className = "field";
+      addrField.innerHTML = `<span class="field-label">Address</span>`;
+      addressInput = document.createElement("input");
+      addressInput.className = "mono";
+      addressInput.type = "text";
+      addressInput.spellcheck = false;
+      addressInput.autocomplete = "off";
+      addressInput.placeholder = "ltc1… or ltcmweb1…";
+      addressInput.value = existing?.address ?? "";
+      addrField.append(addressInput);
+
+      const kindField = document.createElement("label");
+      kindField.className = "field";
+      kindField.innerHTML = `<span class="field-label">Type</span>`;
+      kindSelect = document.createElement("select");
+      kindSelect.innerHTML = `
+        <option value="public">Public</option>
+        <option value="private">Private</option>
+      `;
+      kindSelect.value = existing?.kind ?? "public";
+      kindField.append(kindSelect);
+
+      const hint = document.createElement("p");
+      hint.className = "hint";
+      hint.textContent =
+        "Public contacts use transparent addresses. Reusing them can link payments to this name.";
+      body.append(nameField, addrField, kindField, hint);
+    },
+    actions: [
+      { id: "cancel", label: "Cancel", kind: "ghost" },
+      { id: "save", label: "Save", kind: "primary" },
+    ],
+  });
+  if (result !== "save") return;
+  const name = nameInput.value.trim();
+  const address = addressInput.value.trim();
+  const kind = kindSelect.value as ContactKind;
+  if (!name || !address) {
+    setStatus("Name and address are required.", "error");
+    return;
+  }
+  try {
+    await invoke<ContactRecord>("upsert_contact", {
+      req: {
+        id: existing?.id ?? null,
+        name,
+        address,
+        kind,
+      },
+    });
+    await refreshContacts();
+    setStatus(existing ? "Contact updated." : "Contact saved.", "success");
+  } catch (e) {
+    setStatus(String(e), "error");
+  }
+}
+
+async function editContactFlow(contact: ContactRecord) {
+  await contactEditorFlow(contact);
+}
+
+async function deleteContactFlow(contact: ContactRecord) {
+  const result = await openModal({
+    title: "Delete contact",
+    build: (body) => {
+      const p = document.createElement("p");
+      p.className = "lede";
+      p.textContent = `Remove ${contact.name} from your address book?`;
+      body.append(p);
+    },
+    actions: [
+      { id: "cancel", label: "Cancel", kind: "ghost" },
+      { id: "delete", label: "Delete", kind: "danger" },
+    ],
+  });
+  if (result !== "delete") return;
+  try {
+    await invoke("delete_contact", { req: { id: contact.id } });
+    await refreshContacts();
+    setStatus("Contact deleted.", "success");
+  } catch (e) {
+    setStatus(String(e), "error");
+  }
+}
+
+async function pickContactFlow(preferred: ContactKind) {
+  await refreshContacts();
+  if (contactsCache.length === 0) {
+    setStatus("No contacts yet — add one in Settings.", "info");
+    return;
+  }
+  const ordered = [
+    ...contactsCache.filter((c) => c.kind === preferred),
+    ...contactsCache.filter((c) => c.kind !== preferred),
+  ];
+  const picked = await pickContactModal(ordered);
+  if (!picked) return;
+  applyContactToSend(picked);
+}
+
+function applyContactToSend(contact: ContactRecord) {
+  sendMode = contact.kind === "public" ? "public" : "private";
+  applySegModes();
+  setCard("send");
+  if (contact.kind === "public") {
+    el.sendAddress.value = contact.address;
+    el.sendAddress.focus();
+  } else {
+    el.mwebSendAddress.value = contact.address;
+    el.mwebSendAddress.focus();
+  }
+}
+
+async function pickContactModal(contacts: ContactRecord[]): Promise<ContactRecord | null> {
+  let chosen: ContactRecord | null = null;
+  const action = await openModal({
+    title: "Choose contact",
+    build: (body) => {
+      const list = document.createElement("ul");
+      list.className = "contact-pick-list";
+      for (const contact of contacts) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "contact-pick-row";
+        const name = document.createElement("span");
+        name.className = "contact-name";
+        name.textContent = contact.name;
+        const meta = document.createElement("span");
+        meta.className = "contact-meta";
+        meta.textContent = contact.kind === "public" ? "Public" : "Private";
+        const addr = document.createElement("span");
+        addr.className = "contact-addr";
+        addr.textContent = contact.address;
+        btn.append(name, meta, addr);
+        btn.addEventListener("click", () => {
+          chosen = contact;
+          closeModal("picked");
+        });
+        const li = document.createElement("li");
+        li.append(btn);
+        list.append(li);
+      }
+      body.append(list);
+    },
+    actions: [{ id: "cancel", label: "Cancel", kind: "ghost" }],
+  });
+  return action === "picked" ? chosen : null;
+}
+
 async function loadSettings() {
   try {
     const s = await invoke<WalletSettings>("get_settings");
@@ -2483,6 +2829,7 @@ async function loadSettings() {
     el.settingsPeers.value = s.mweb_peers.join(", ");
     el.settingsMwebScheme.value = s.mweb_scheme ?? "litecoin-core";
     updateSecurityChecklist();
+    await refreshContacts();
   } catch {
     /* ignore */
   }
@@ -3286,7 +3633,111 @@ el.btnApplyMwebScheme.addEventListener("click", async () => {
   }
 });
 
+function selectedOutpointsForSend(): string[] | undefined {
+  if (el.sendDrain.checked || selectedOutpoints.size === 0) return undefined;
+  return Array.from(selectedOutpoints);
+}
+
+function updateCoinControlSum() {
+  if (selectedOutpoints.size === 0) {
+    el.coinControlSum.hidden = true;
+    el.coinControlSum.textContent = "";
+    return;
+  }
+  let sum = 0;
+  for (const utxo of utxoCache) {
+    if (selectedOutpoints.has(utxo.outpoint)) sum += utxo.amount_sats;
+  }
+  el.coinControlSum.hidden = false;
+  el.coinControlSum.textContent = `Selected ${selectedOutpoints.size} coin${
+    selectedOutpoints.size === 1 ? "" : "s"
+  } · ${formatAmountPlain(sum)}`;
+}
+
+function renderUtxoList() {
+  el.utxoList.textContent = "";
+  el.utxoEmpty.hidden = utxoCache.length > 0;
+  for (const utxo of utxoCache) {
+    const li = document.createElement("li");
+    li.className = utxo.locked ? "utxo-row is-locked" : "utxo-row";
+
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.disabled = utxo.locked || el.sendDrain.checked;
+    check.checked = selectedOutpoints.has(utxo.outpoint);
+    check.addEventListener("change", () => {
+      if (check.checked) selectedOutpoints.add(utxo.outpoint);
+      else selectedOutpoints.delete(utxo.outpoint);
+      updateCoinControlSum();
+    });
+
+    const main = document.createElement("div");
+    main.className = "utxo-main";
+    const amt = document.createElement("span");
+    amt.textContent = formatAmountPlain(utxo.amount_sats);
+    const meta = document.createElement("span");
+    meta.className = "utxo-meta";
+    const kind = utxo.keychain === "internal" ? "change" : "receive";
+    const conf =
+      utxo.confirmations === 0
+        ? "pending"
+        : `${utxo.confirmations.toLocaleString("en-US")} conf`;
+    meta.textContent = `${kind} · ${conf}${utxo.locked ? " · frozen" : ""}`;
+    const id = document.createElement("span");
+    id.className = "utxo-id";
+    id.textContent = utxo.outpoint;
+    main.append(amt, meta, id);
+
+    const freeze = document.createElement("button");
+    freeze.type = "button";
+    freeze.className = "btn btn-ghost btn-sm utxo-freeze";
+    freeze.textContent = utxo.locked ? "Unfreeze" : "Freeze";
+    freeze.addEventListener("click", () => void toggleUtxoLocked(utxo));
+
+    li.append(check, main, freeze);
+    el.utxoList.appendChild(li);
+  }
+  updateCoinControlSum();
+}
+
+async function refreshUtxos() {
+  try {
+    utxoCache = (await invoke<UtxoRecord[]>("list_unspent")) ?? [];
+  } catch {
+    utxoCache = [];
+  }
+  const live = new Set(utxoCache.map((u) => u.outpoint));
+  for (const op of Array.from(selectedOutpoints)) {
+    if (!live.has(op)) selectedOutpoints.delete(op);
+  }
+  renderUtxoList();
+}
+
+async function toggleUtxoLocked(utxo: UtxoRecord) {
+  try {
+    await invoke("set_utxo_locked", {
+      req: { outpoint: utxo.outpoint, locked: !utxo.locked },
+    });
+    if (!utxo.locked) selectedOutpoints.delete(utxo.outpoint);
+    await refreshUtxos();
+    setStatus(utxo.locked ? "Coin unfrozen." : "Coin frozen.", "success");
+  } catch (e) {
+    setStatus(String(e), "error");
+  }
+}
+
+el.coinControl.addEventListener("toggle", () => {
+  if (el.coinControl.open) void refreshUtxos();
+});
+el.btnRefreshUtxos.addEventListener("click", () => void refreshUtxos());
+
 el.sendDrain.addEventListener("change", () => {
+  if (el.sendDrain.checked) {
+    selectedOutpoints.clear();
+    renderUtxoList();
+  } else {
+    renderUtxoList();
+  }
   updateBusyUi();
 });
 el.peginDrain.addEventListener("change", () => {
@@ -3330,6 +3781,12 @@ el.sendForm.addEventListener("submit", async (event) => {
     amount_sats = parsed;
   }
 
+  const selected_outpoints = selectedOutpointsForSend();
+  if (drain && selected_outpoints?.length) {
+    setError("Turn off Choose coins or Send all — they cannot be used together.");
+    return;
+  }
+
   sending = true;
   setError(null);
   updateBusyUi();
@@ -3338,7 +3795,7 @@ el.sendForm.addEventListener("submit", async (event) => {
   let preview: SendPreview;
   try {
     preview = await invoke<SendPreview>("preview_send", {
-      req: { address, amount_sats, drain, fee_rate_sat_vb },
+      req: { address, amount_sats, drain, fee_rate_sat_vb, selected_outpoints },
     });
   } catch (e) {
     setError(String(e));
@@ -3384,6 +3841,9 @@ el.sendForm.addEventListener("submit", async (event) => {
       ["Network fee", formatAmountPlain(preview.fee_sats)],
       ["Total leaving wallet", formatAmountPlain(totalLeave)],
       ...(drain ? ([["Emptying", "All transparent funds"]] as DetailRow[]) : []),
+      ...(selected_outpoints?.length
+        ? ([["Coins", `${selected_outpoints.length} selected`]] as DetailRow[])
+        : []),
     ],
     detail: `Fee rate ${preview.fee_rate_sat_vb} sat/vB (${feeSource}).`,
     confirmLabel: drain ? "Send all now" : "Send now",
@@ -3408,6 +3868,7 @@ el.sendForm.addEventListener("submit", async (event) => {
         amount_sats,
         fee_rate_sat_vb: preview.fee_rate_sat_vb,
         drain,
+        selected_outpoints,
       },
     });
   } catch (e) {
@@ -3425,6 +3886,8 @@ el.sendForm.addEventListener("submit", async (event) => {
   el.sendAddress.value = "";
   el.sendAmount.value = "";
   el.sendDrain.checked = false;
+  selectedOutpoints.clear();
+  el.coinControl.open = false;
   selectedFeeRateSatVb = null;
   customFeeActive = false;
   el.feeCustom.value = "";

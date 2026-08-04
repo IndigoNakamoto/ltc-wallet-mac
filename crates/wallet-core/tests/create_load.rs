@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tempfile::tempdir;
 use wallet_core::{
     CreateWalletRequest, MemoryBackedApp, MemoryStore, RestoreWalletRequest, SecretStore,
-    SendRequest, SetTxLabelRequest, WalletError, WalletNetwork,
+    SendRequest, SetTxLabelRequest, SetUtxoLockedRequest, WalletError, WalletNetwork,
 };
 
 fn with_secrets(secrets: Arc<dyn SecretStore>) -> MemoryBackedApp {
@@ -169,6 +169,7 @@ fn send_rejects_invalid_address() {
             amount_sats: 1000,
             fee_rate_sat_vb: Some(1),
             drain: false,
+            selected_outpoints: None,
         })
         .expect_err("invalid address");
     assert!(matches!(err, WalletError::InvalidAddress(_)));
@@ -285,6 +286,202 @@ fn tx_labels_round_trip_and_wipe() {
 
     app.wipe(dir.path()).unwrap();
     assert!(!dir.path().join("tx_labels.json").is_file());
+}
+
+#[test]
+fn contacts_round_trip_and_wipe() {
+    use wallet_core::{ContactKind, DeleteContactRequest, UpsertContactRequest};
+
+    let dir = tempdir().unwrap();
+    let app = with_secrets(Arc::new(MemoryStore::new()));
+    app.create(
+        dir.path(),
+        CreateWalletRequest {
+            network: WalletNetwork::Testnet,
+            electrum_url: None,
+        },
+    )
+    .unwrap();
+
+    let address = app.receive_address().unwrap();
+    let contact = app
+        .upsert_contact(UpsertContactRequest {
+            id: None,
+            name: " Alice ".into(),
+            address: address.clone(),
+            kind: ContactKind::Public,
+        })
+        .unwrap();
+    assert_eq!(contact.name, "Alice");
+    assert_eq!(contact.address, address);
+    assert!(dir.path().join("contacts.json").is_file());
+
+    let listed = app.list_contacts().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, contact.id);
+
+    app.delete_contact(DeleteContactRequest {
+        id: contact.id.clone(),
+    })
+    .unwrap();
+    assert!(app.list_contacts().unwrap().is_empty());
+    assert!(!dir.path().join("contacts.json").is_file());
+
+    app.upsert_contact(UpsertContactRequest {
+        id: None,
+        name: "Bob".into(),
+        address,
+        kind: ContactKind::Public,
+    })
+    .unwrap();
+    assert!(dir.path().join("contacts.json").is_file());
+    app.wipe(dir.path()).unwrap();
+    assert!(!dir.path().join("contacts.json").is_file());
+}
+
+#[test]
+fn list_unspent_empty_on_new_wallet() {
+    let dir = tempdir().unwrap();
+    let app = with_secrets(Arc::new(MemoryStore::new()));
+    app.create(
+        dir.path(),
+        CreateWalletRequest {
+            network: WalletNetwork::Testnet,
+            electrum_url: None,
+        },
+    )
+    .unwrap();
+    assert!(app.list_unspent().unwrap().is_empty());
+}
+
+#[test]
+fn manual_selection_rejects_drain_and_unknown_outpoint() {
+    let dir = tempdir().unwrap();
+    let app = with_secrets(Arc::new(MemoryStore::new()));
+    app.create(
+        dir.path(),
+        CreateWalletRequest {
+            network: WalletNetwork::Testnet,
+            electrum_url: None,
+        },
+    )
+    .unwrap();
+    let address = app.receive_address().unwrap();
+
+    let drain_err = app
+        .send(SendRequest {
+            address: address.clone(),
+            amount_sats: 0,
+            fee_rate_sat_vb: Some(1),
+            drain: true,
+            selected_outpoints: Some(vec![
+                "0000000000000000000000000000000000000000000000000000000000000000:0".into(),
+            ]),
+        })
+        .expect_err("drain + selection");
+    assert!(
+        drain_err.to_string().contains("Send all"),
+        "got {drain_err}"
+    );
+
+    let unknown_err = app
+        .send(SendRequest {
+            address,
+            amount_sats: 10_000,
+            fee_rate_sat_vb: Some(1),
+            drain: false,
+            selected_outpoints: Some(vec![
+                "0000000000000000000000000000000000000000000000000000000000000000:0".into(),
+            ]),
+        })
+        .expect_err("unknown outpoint");
+    assert!(
+        unknown_err.to_string().contains("not an unspent"),
+        "got {unknown_err}"
+    );
+}
+
+#[test]
+fn coin_control_list_lock_and_manual_select() {
+    use bdk_wallet::bitcoin::hashes::Hash;
+    use bdk_wallet::bitcoin::{Amount, BlockHash};
+    use bdk_wallet::chain::BlockId;
+    use bdk_wallet::test_utils::{insert_checkpoint, receive_output_in_latest_block};
+
+    let dir = tempdir().unwrap();
+    let app = with_secrets(Arc::new(MemoryStore::new()));
+    app.create(
+        dir.path(),
+        CreateWalletRequest {
+            network: WalletNetwork::Testnet,
+            electrum_url: None,
+        },
+    )
+    .unwrap();
+
+    let outpoint = app
+        .with_wallet_mut(|wallet, db| {
+            insert_checkpoint(
+                wallet,
+                BlockId {
+                    height: 1,
+                    hash: BlockHash::all_zeros(),
+                },
+            );
+            let op = receive_output_in_latest_block(wallet, Amount::from_sat(100_000));
+            wallet
+                .persist(db)
+                .map_err(|e| WalletError::Persist(e.to_string()))?;
+            Ok(op.to_string())
+        })
+        .unwrap();
+
+    let utxos = app.list_unspent().unwrap();
+    assert_eq!(utxos.len(), 1);
+    assert_eq!(utxos[0].outpoint, outpoint);
+    assert_eq!(utxos[0].amount_sats, 100_000);
+    assert!(!utxos[0].locked);
+
+    app.set_utxo_locked(SetUtxoLockedRequest {
+        outpoint: outpoint.clone(),
+        locked: true,
+    })
+    .unwrap();
+    let locked = app.list_unspent().unwrap();
+    assert!(locked[0].locked);
+
+    let dest = app.receive_address().unwrap();
+    let frozen_err = app
+        .send(SendRequest {
+            address: dest.clone(),
+            amount_sats: 50_000,
+            fee_rate_sat_vb: Some(1),
+            drain: false,
+            selected_outpoints: Some(vec![outpoint.clone()]),
+        })
+        .expect_err("frozen selected");
+    assert!(frozen_err.to_string().contains("frozen"), "got {frozen_err}");
+
+    app.set_utxo_locked(SetUtxoLockedRequest {
+        outpoint: outpoint.clone(),
+        locked: false,
+    })
+    .unwrap();
+
+    // Manual selection builds a PSBT; memory app then refuses to broadcast.
+    let broadcast_err = app
+        .send(SendRequest {
+            address: dest,
+            amount_sats: 50_000,
+            fee_rate_sat_vb: Some(1),
+            drain: false,
+            selected_outpoints: Some(vec![outpoint]),
+        })
+        .expect_err("no broadcast");
+    assert!(
+        matches!(broadcast_err, WalletError::Electrum(_)),
+        "expected build success then electrum stub, got {broadcast_err}"
+    );
 }
 
 #[test]

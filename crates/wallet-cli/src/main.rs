@@ -215,6 +215,7 @@ fn main() -> Result<()> {
                     amount_sats: amount_sats.unwrap_or(0),
                     fee_rate_sat_vb: Some(fee_rate),
                     drain,
+                    selected_outpoints: None,
                 })
                 .context("send")?;
             println!("{}", serde_json::to_string_pretty(&result)?);

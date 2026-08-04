@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use bdk_mweb::mweb_sync::SyncProgress;
 
 use bdk_wallet::bitcoin::consensus::encode::deserialize;
-use bdk_wallet::bitcoin::{Address, Amount, FeeRate, Psbt, ScriptBuf, Txid};
+use bdk_wallet::bitcoin::{Address, Amount, FeeRate, OutPoint, Psbt, ScriptBuf, Txid};
 use bdk_wallet::chain::ChainPosition;
 use bdk_wallet::psbt::PsbtUtils;
 use bdk_wallet::rusqlite::Connection;
@@ -15,11 +15,13 @@ use bdk_wallet::{KeychainKind, PersistedWallet, SignOptions};
 use crate::descriptors::{self, create_params, load_params};
 use crate::dto::{
     AddressReuseHint, CombinedSummary, CreateWalletRequest, CreateWalletResponse, FeeEstimate,
-    MigrateEncryptRequest, MwebBroadcastResult, MwebScheme, MwebSendPreview, MwebSendRequest,
-    PeginPreview, PeginRequest, PeginResult, PegoutPreview, PegoutRequest, RestoreWalletRequest,
-    SendPreview, SendRequest, SendResult, SetTxLabelRequest, SyncResult, TxKind, TxRecord,
+    ContactRecord, DeleteContactRequest, MigrateEncryptRequest, MwebBroadcastResult, MwebScheme,
+    MwebSendPreview, MwebSendRequest, PeginPreview, PeginRequest, PeginResult, PegoutPreview,
+    PegoutRequest, RestoreWalletRequest, SendPreview, SendRequest, SendResult, SetTxLabelRequest,
+    SetUtxoLockedRequest, SyncResult, TxKind, TxRecord, UpsertContactRequest, UtxoRecord,
     UnlockRequest, UpdateSettingsRequest, WalletSettings, WalletSummary, DEFAULT_MWEB_FEE_SATS,
 };
+use crate::contacts;
 use crate::labels;
 use crate::electrum::{self, BATCH_SIZE, MIN_FEE_RATE_SAT_VB, STOP_GAP};
 use crate::error::WalletError;
@@ -470,6 +472,70 @@ impl WalletApp {
         let guard = self.lock_state()?;
         let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
         labels::set_label(&state.data_dir, &req.txid, &req.label)
+    }
+
+    /// Non-secret history export (CSV or JSON). Excludes mnemonic and settings secrets.
+    pub fn export_history(
+        &self,
+        format: crate::HistoryExportFormat,
+    ) -> Result<String, WalletError> {
+        let txs = self.transactions()?;
+        let labels = self.get_tx_labels()?;
+        crate::history_export::render(format, &txs, &labels)
+    }
+
+    pub fn list_contacts(&self) -> Result<Vec<ContactRecord>, WalletError> {
+        self.ensure_unlocked()?;
+        let guard = self.lock_state()?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        Ok(contacts::read_contacts(&state.data_dir)?.contacts)
+    }
+
+    pub fn upsert_contact(&self, req: UpsertContactRequest) -> Result<ContactRecord, WalletError> {
+        self.ensure_unlocked()?;
+        let guard = self.lock_state()?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        contacts::upsert_contact(
+            &state.data_dir,
+            state.network,
+            req.id.as_deref(),
+            &req.name,
+            &req.address,
+            req.kind,
+        )
+    }
+
+    pub fn delete_contact(&self, req: DeleteContactRequest) -> Result<(), WalletError> {
+        self.ensure_unlocked()?;
+        let guard = self.lock_state()?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        contacts::delete_contact(&state.data_dir, &req.id)
+    }
+
+    /// List transparent unspent outputs for coin control.
+    pub fn list_unspent(&self) -> Result<Vec<UtxoRecord>, WalletError> {
+        self.ensure_unlocked()?;
+        let guard = self.lock_state()?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        Ok(collect_unspent(state))
+    }
+
+    /// Freeze or unfreeze a transparent UTXO (persisted in the wallet DB).
+    pub fn set_utxo_locked(&self, req: SetUtxoLockedRequest) -> Result<(), WalletError> {
+        self.ensure_unlocked()?;
+        let mut guard = self.lock_state()?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        let outpoint = parse_outpoint(&req.outpoint)?;
+        if req.locked {
+            state.wallet.lock_outpoint(outpoint);
+        } else {
+            state.wallet.unlock_outpoint(outpoint);
+        }
+        state
+            .wallet
+            .persist(&mut state.db)
+            .map_err(|e| WalletError::Persist(e.to_string()))?;
+        Ok(())
     }
 
     pub fn update_settings(&self, req: UpdateSettingsRequest) -> Result<(), WalletError> {
@@ -1204,6 +1270,81 @@ impl MemoryBackedApp {
         labels::set_label(&state.data_dir, &req.txid, &req.label)
     }
 
+    pub fn list_contacts(&self) -> Result<Vec<ContactRecord>, WalletError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        Ok(contacts::read_contacts(&state.data_dir)?.contacts)
+    }
+
+    pub fn upsert_contact(&self, req: UpsertContactRequest) -> Result<ContactRecord, WalletError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        contacts::upsert_contact(
+            &state.data_dir,
+            state.network,
+            req.id.as_deref(),
+            &req.name,
+            &req.address,
+            req.kind,
+        )
+    }
+
+    pub fn delete_contact(&self, req: DeleteContactRequest) -> Result<(), WalletError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        contacts::delete_contact(&state.data_dir, &req.id)
+    }
+
+    pub fn list_unspent(&self) -> Result<Vec<UtxoRecord>, WalletError> {
+        let guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_ref().ok_or(WalletError::NotLoaded)?;
+        Ok(collect_unspent(state))
+    }
+
+    pub fn set_utxo_locked(&self, req: SetUtxoLockedRequest) -> Result<(), WalletError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        let outpoint = parse_outpoint(&req.outpoint)?;
+        if req.locked {
+            state.wallet.lock_outpoint(outpoint);
+        } else {
+            state.wallet.unlock_outpoint(outpoint);
+        }
+        state
+            .wallet
+            .persist(&mut state.db)
+            .map_err(|e| WalletError::Persist(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Test helper: mutate the in-memory wallet (for funding UTXOs in integration tests).
+    pub fn with_wallet_mut<F, T>(&self, f: F) -> Result<T, WalletError>
+    where
+        F: FnOnce(&mut PersistedWallet<Connection>, &mut Connection) -> Result<T, WalletError>,
+    {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        f(&mut state.wallet, &mut state.db)
+    }
+
     /// Test helper: mark an external derivation index as used for reuse-detection tests.
     pub fn mark_external_used(&self, index: u32) -> Result<(), WalletError> {
         let mut guard = self
@@ -1506,7 +1647,48 @@ fn build_send_psbt(
     let recipient_script = address.script_pubkey();
     let min_non_dust = recipient_script.minimal_non_dust_custom(dust_relay);
 
+    let selected = req
+        .selected_outpoints
+        .as_ref()
+        .map(|v| {
+            v.iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(parse_outpoint)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .filter(|v| !v.is_empty());
+
+    if selected.is_some() && req.drain {
+        return Err(WalletError::BuildTx(
+            "manual coin selection cannot be used with Send all — turn off Send all first".into(),
+        ));
+    }
+
+    if let Some(ref outpoints) = selected {
+        for op in outpoints {
+            if state.wallet.get_utxo(*op).is_none() {
+                return Err(WalletError::BuildTx(format!(
+                    "selected outpoint {op} is not an unspent output in this wallet"
+                )));
+            }
+            if state.wallet.is_outpoint_locked(*op) {
+                return Err(WalletError::BuildTx(format!(
+                    "selected outpoint {op} is frozen — unfreeze it before spending"
+                )));
+            }
+        }
+    }
+
     let mut tx_builder = state.wallet.build_tx();
+    if let Some(ref outpoints) = selected {
+        tx_builder
+            .add_utxos(outpoints)
+            .map_err(|e| WalletError::BuildTx(e.to_string()))?;
+        tx_builder.manually_selected_only();
+    }
+
     if req.drain {
         tx_builder.drain_wallet();
         tx_builder.drain_to(recipient_script.clone());
@@ -1534,6 +1716,50 @@ fn build_send_psbt(
         }
     })?;
     Ok((fee_rate_sat_vb.max(MIN_FEE_RATE_SAT_VB), psbt, recipient_script))
+}
+
+fn parse_outpoint(raw: &str) -> Result<OutPoint, WalletError> {
+    OutPoint::from_str(raw.trim()).map_err(|e| {
+        WalletError::BuildTx(format!(
+            "invalid outpoint '{raw}' (expected txid:vout): {e}"
+        ))
+    })
+}
+
+fn collect_unspent(state: &WalletState) -> Vec<UtxoRecord> {
+    let tip = state.wallet.local_chain().tip().height();
+    let mut rows: Vec<UtxoRecord> = state
+        .wallet
+        .list_unspent()
+        .map(|utxo| {
+            let confirmations = match utxo.chain_position {
+                ChainPosition::Confirmed { anchor, .. } => {
+                    tip.saturating_sub(anchor.block_id.height).saturating_add(1)
+                }
+                ChainPosition::Unconfirmed { .. } => 0,
+            };
+            let keychain = match utxo.keychain {
+                KeychainKind::External => "external",
+                KeychainKind::Internal => "internal",
+            };
+            UtxoRecord {
+                outpoint: utxo.outpoint.to_string(),
+                txid: utxo.outpoint.txid.to_string(),
+                vout: utxo.outpoint.vout,
+                amount_sats: utxo.txout.value.to_sat(),
+                keychain: keychain.into(),
+                confirmations,
+                locked: state.wallet.is_outpoint_locked(utxo.outpoint),
+            }
+        })
+        .collect();
+    rows.sort_by(|a, b| {
+        b.confirmations
+            .cmp(&a.confirmations)
+            .then_with(|| b.amount_sats.cmp(&a.amount_sats))
+            .then_with(|| a.outpoint.cmp(&b.outpoint))
+    });
+    rows
 }
 
 /// Find history peg-ins missing from the transparent graph and apply their spends.

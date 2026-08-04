@@ -102,6 +102,33 @@ pub struct SendRequest {
     /// When true, drain all spendable funds to `address` (send max).
     #[serde(default)]
     pub drain: bool,
+    /// When non-empty, spend only these transparent outpoints (`txid:vout`).
+    /// Incompatible with [`Self::drain`].
+    #[serde(default)]
+    pub selected_outpoints: Option<Vec<String>>,
+}
+
+/// One spendable transparent UTXO for coin control.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UtxoRecord {
+    /// `txid:vout`
+    pub outpoint: String,
+    pub txid: String,
+    pub vout: u32,
+    pub amount_sats: u64,
+    /// `external` (receive) or `internal` (change).
+    pub keychain: String,
+    pub confirmations: u32,
+    /// Frozen coins are skipped by automatic coin selection.
+    pub locked: bool,
+}
+
+/// Freeze or unfreeze a transparent UTXO.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetUtxoLockedRequest {
+    /// `txid:vout`
+    pub outpoint: String,
+    pub locked: bool,
 }
 
 /// Result of a broadcast send.
@@ -261,6 +288,39 @@ pub struct SetTxLabelRequest {
     pub txid: String,
     /// Empty string clears the label.
     pub label: String,
+}
+
+/// Address-book contact kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContactKind {
+    Public,
+    Private,
+}
+
+/// Local address-book entry (non-secret).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContactRecord {
+    pub id: String,
+    pub name: String,
+    pub address: String,
+    pub kind: ContactKind,
+}
+
+/// Create or update a contact. Empty / omitted `id` creates a new entry.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpsertContactRequest {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub name: String,
+    pub address: String,
+    pub kind: ContactKind,
+}
+
+/// Delete a contact by id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteContactRequest {
+    pub id: String,
 }
 
 /// One input or output from explorer tx enrichment.
