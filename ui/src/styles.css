@@ -679,6 +679,13 @@ code {
   line-height: 1.15;
   font-variant-numeric: tabular-nums;
   transition: font-size 0.2s var(--ease);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.balance-total:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.55);
+  outline-offset: 4px;
 }
 
 .balance-fiat {
@@ -1444,6 +1451,22 @@ textarea {
   border-bottom: 0;
 }
 
+.tx-row.tx-row-pulse {
+  animation: tx-pulse 1.4s var(--ease);
+}
+
+@keyframes tx-pulse {
+  0% {
+    background: transparent;
+  }
+  20% {
+    background: color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
 /* Nexus rows: received = accent-blue circle, sent = ink circle. */
 .tx-icon {
   display: grid;
@@ -1932,6 +1955,73 @@ textarea {
 .fee-chip[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.fee-custom-field {
+  margin-top: 0.15rem;
+}
+
+.fee-custom-field input {
+  max-width: 10rem;
+}
+
+.unit-fieldset {
+  margin: 0.65rem 0 0.85rem;
+  padding: 0;
+  border: 0;
+}
+
+.unit-fieldset .field-label {
+  margin-bottom: 0.4rem;
+}
+
+.unit-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.unit-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.unit-option:has(input:checked) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.unit-option input {
+  margin: 0;
+}
+
+.receive-request {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin: 0.65rem 0;
+}
+
+.fee-why {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.fee-why summary {
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.fee-why p {
+  margin: 0.4rem 0 0;
+  color: var(--text-2);
 }
 
 /* ---------------------------------------------------------------------------

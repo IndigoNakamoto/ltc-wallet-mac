@@ -137,6 +137,19 @@ type FeeLadder = {
   minimum_sat_vb: number | null;
 };
 
+type FeeEstimate = {
+  fee_rate_sat_vb: number;
+  is_fallback: boolean;
+};
+
+type DisplayUnit = "ltc" | "litoshis";
+
+type ParsedPaymentUri = {
+  address: string;
+  amountSats: number | null;
+  label: string | null;
+};
+
 type MwebSyncProgress = {
   active: boolean;
   fetched: number;
@@ -198,6 +211,8 @@ const BACKUP_VERIFIED_KEY = "ltc-backup-verified";
 const BACKUP_BANNER_DISMISSED_KEY = "ltc-backup-banner-dismissed";
 const MWEB_COACH_SEEN_KEY = "ltc-mweb-coach-seen";
 const SECURITY_CHECKLIST_DISMISSED_KEY = "ltc-security-checklist-dismissed";
+const DISPLAY_UNIT_KEY = "ltc-display-unit";
+const FIRST_RECEIVE_SEEN_KEY = "ltc-first-receive-seen";
 
 const DUST_LITOSHIS = 2940;
 const AUTO_SYNC_MS = 60_000;
@@ -256,6 +271,9 @@ const el = {
   mwebProgressText: document.querySelector<HTMLElement>("#mweb-progress-text")!,
   address: document.querySelector<HTMLElement>("#address")!,
   receiveQr: document.querySelector<HTMLCanvasElement>("#receive-qr")!,
+  receiveAmount: document.querySelector<HTMLInputElement>("#receive-amount")!,
+  receiveAmountLabel: document.querySelector<HTMLElement>("#receive-amount-label")!,
+  receiveLabel: document.querySelector<HTMLInputElement>("#receive-label")!,
   mwebQr: document.querySelector<HTMLCanvasElement>("#mweb-qr")!,
   mwebAddress: document.querySelector<HTMLElement>("#mweb-address")!,
   mwebTools: document.querySelector<HTMLElement>("#mweb-tools")!,
@@ -337,9 +355,17 @@ const el = {
   sendDrain: document.querySelector<HTMLInputElement>("#send-drain")!,
   feeChips: document.querySelector<HTMLElement>("#fee-chips")!,
   feeChipRow: document.querySelector<HTMLElement>("#fee-chip-row")!,
+  feeCustomField: document.querySelector<HTMLElement>("#fee-custom-field")!,
+  feeCustom: document.querySelector<HTMLInputElement>("#fee-custom")!,
   sendFeeHint: document.querySelector<HTMLElement>("#send-fee-hint")!,
+  sendAmountLabel: document.querySelector<HTMLElement>("#send-amount-label")!,
+  mwebSendAmountLabel: document.querySelector<HTMLElement>("#mweb-send-amount-label")!,
+  peginAmountLabel: document.querySelector<HTMLElement>("#pegin-amount-label")!,
+  pegoutAmountLabel: document.querySelector<HTMLElement>("#pegout-amount-label")!,
   settingsExplorer: document.querySelector<HTMLInputElement>("#settings-explorer")!,
   settingsShowFiat: document.querySelector<HTMLInputElement>("#settings-show-fiat")!,
+  settingsUnitLtc: document.querySelector<HTMLInputElement>("#settings-unit-ltc")!,
+  settingsUnitLitoshis: document.querySelector<HTMLInputElement>("#settings-unit-litoshis")!,
   settingsFeeHints: document.querySelector<HTMLInputElement>("#settings-fee-hints")!,
   settingsElectrum: document.querySelector<HTMLInputElement>("#settings-electrum")!,
   settingsValidateTls: document.querySelector<HTMLInputElement>("#settings-validate-tls")!,
@@ -364,6 +390,7 @@ const el = {
   btnSync: document.querySelector<HTMLButtonElement>("#btn-sync")!,
   btnAddress: document.querySelector<HTMLButtonElement>("#btn-address")!,
   btnCopy: document.querySelector<HTMLButtonElement>("#btn-copy")!,
+  btnCopyPayment: document.querySelector<HTMLButtonElement>("#btn-copy-payment")!,
   btnCopyMweb: document.querySelector<HTMLButtonElement>("#btn-copy-mweb")!,
   btnResyncMweb: document.querySelector<HTMLButtonElement>("#btn-resync-mweb")!,
   btnApplyMwebScheme: document.querySelector<HTMLButtonElement>("#btn-apply-mweb-scheme")!,
@@ -414,7 +441,14 @@ let showFiat = true;
 let useExplorerFeeHints = true;
 let spotPriceUsd: number | null = null;
 let lastTotalSats = 0;
+let lastPendingSats = 0;
+let lastCombined: CombinedSummary | null = null;
+let lastSummary: WalletSummary | null = null;
+let displayUnit: DisplayUnit = "ltc";
 let selectedFeeRateSatVb: number | null = null;
+let customFeeActive = false;
+/** True once we've observed a non-zero balance this session (legacy first-receive skip). */
+let sawNonZeroBalance = false;
 /** In-session mnemonic for create → verify; cleared after quiz success. */
 let pendingMnemonic: string | null = null;
 /** Mnemonic indexes shown as numbered slots (phrase order). */
@@ -504,7 +538,7 @@ function buildIoSection(title: string, items: TxIo[]): HTMLElement {
         : "(no address)";
       const amt = document.createElement("span");
       amt.className = "amt";
-      amt.textContent = formatLtc(io.value_sats);
+      amt.textContent = formatAmount(io.value_sats);
       li.append(addr, amt);
       list.appendChild(li);
     }
@@ -515,23 +549,32 @@ function buildIoSection(title: string, items: TxIo[]): HTMLElement {
 
 function renderFeeChips(ladder: FeeLadder | null) {
   el.feeChipRow.textContent = "";
-  if (!useExplorerFeeHints || !ladder) {
+  if (!useExplorerFeeHints) {
     el.feeChips.hidden = true;
+    el.feeCustomField.hidden = true;
     return;
   }
   el.feeChips.hidden = false;
+  el.feeCustomField.hidden = false;
+  if (!ladder) return;
   const chips: [string, number][] = [
     ["Fast", ladder.fastest_sat_vb],
-    ["~30m", ladder.half_hour_sat_vb],
-    ["~1h", ladder.hour_sat_vb],
+    ["~30 min", ladder.half_hour_sat_vb],
+    ["~1 hour", ladder.hour_sat_vb],
   ];
+  if (ladder.economy_sat_vb != null) {
+    chips.push(["Economy", ladder.economy_sat_vb]);
+  }
   for (const [label, rate] of chips) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "fee-chip";
     btn.textContent = `${label} · ${rate} sat/vB`;
-    btn.setAttribute("aria-pressed", selectedFeeRateSatVb === rate ? "true" : "false");
+    const pressed = !customFeeActive && selectedFeeRateSatVb === rate;
+    btn.setAttribute("aria-pressed", pressed ? "true" : "false");
     btn.addEventListener("click", () => {
+      customFeeActive = false;
+      el.feeCustom.value = "";
       selectedFeeRateSatVb = selectedFeeRateSatVb === rate ? null : rate;
       renderFeeChips(ladder);
       el.sendFeeHint.textContent =
@@ -543,9 +586,34 @@ function renderFeeChips(ladder: FeeLadder | null) {
   }
 }
 
+async function refreshFeeEstimate() {
+  if (useExplorerFeeHints || currentPhase !== "ready") return;
+  el.feeChips.hidden = false;
+  el.feeChipRow.textContent = "";
+  el.feeCustomField.hidden = false;
+  try {
+    const estimate = await invoke<FeeEstimate>("estimate_fee");
+    const suffix = estimate.is_fallback ? " (floor fallback)" : "";
+    el.sendFeeHint.textContent =
+      selectedFeeRateSatVb != null && customFeeActive
+        ? `Using custom ${selectedFeeRateSatVb} sat/vB.`
+        : `Suggested ~${estimate.fee_rate_sat_vb} sat/vB from Electrum${suffix}.`;
+  } catch {
+    el.sendFeeHint.textContent =
+      selectedFeeRateSatVb != null && customFeeActive
+        ? `Using custom ${selectedFeeRateSatVb} sat/vB.`
+        : "Network fee is calculated automatically.";
+  }
+}
+
 async function refreshFeeLadder() {
-  if (!useExplorerFeeHints || currentPhase !== "ready") {
+  if (currentPhase !== "ready") {
     renderFeeChips(null);
+    return;
+  }
+  if (!useExplorerFeeHints) {
+    renderFeeChips(null);
+    await refreshFeeEstimate();
     return;
   }
   try {
@@ -565,12 +633,29 @@ function formatLtc(sats: number): string {
   return `${sign}${whole}.${frac} LTC`;
 }
 
+function formatLitoshisPlain(sats: number): string {
+  return `${sats.toLocaleString("en-US")} litoshis`;
+}
+
 function formatLitoshis(sats: number): string {
-  return `(${sats.toLocaleString("en-US")} litoshis)`;
+  return `(${formatLitoshisPlain(sats)})`;
+}
+
+/** Primary amount display respecting the unit preference. */
+function formatAmount(sats: number): string {
+  return displayUnit === "litoshis" ? formatLitoshisPlain(sats) : formatLtc(sats);
+}
+
+function formatAmountSubtitle(sats: number): string {
+  return displayUnit === "litoshis" ? `(${formatLtc(sats)})` : formatLitoshis(sats);
 }
 
 function formatMs(ms: number): string {
   return ms >= 1_000 ? `${(ms / 1_000).toFixed(1)}s` : `${ms}ms`;
+}
+
+function unitLabel(): string {
+  return displayUnit === "litoshis" ? "litoshis" : "LTC";
 }
 
 /** Parse LTC decimal string to litoshis. Rejects commas, negatives, >8 decimals. */
@@ -588,13 +673,97 @@ function parseLtcToSats(input: string): number | null {
   return whole * 100_000_000 + Number(frac);
 }
 
+/** Parse integer litoshis (no decimals). */
+function parseLitoshisToSats(input: string): number | null {
+  const raw = input.replace(/[\s\u00a0\u202f,]+/g, "");
+  if (!raw || raw.startsWith("-") || !/^\d+$/.test(raw)) return null;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n)) return null;
+  return n;
+}
+
+function parseAmountToSats(input: string): number | null {
+  return displayUnit === "litoshis" ? parseLitoshisToSats(input) : parseLtcToSats(input);
+}
+
+/** Format sats into the active unit for amount input fields. */
+function formatAmountInput(sats: number): string {
+  if (displayUnit === "litoshis") return String(sats);
+  const whole = Math.trunc(sats / 100_000_000);
+  const frac = Math.abs(sats % 100_000_000)
+    .toString()
+    .padStart(8, "0")
+    .replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : String(whole);
+}
+
 function amountError(field: string, rawValue: string): string {
   const shown = rawValue.trim();
-  if (!shown) return `Enter a ${field} amount in LTC.`;
+  const unit = unitLabel();
+  if (!shown) return `Enter a ${field} amount in ${unit}.`;
+  if (displayUnit === "litoshis") {
+    return `Invalid ${field} amount "${shown}" — enter whole litoshis (e.g. ${DUST_LITOSHIS}).`;
+  }
   if (shown.includes(",")) {
     return `Invalid ${field} amount "${shown}" — use a dot as the decimal separator (e.g. 0.009), no commas.`;
   }
   return `Invalid ${field} amount "${shown}" — enter LTC like 0.009 (max 8 decimal places).`;
+}
+
+function readDisplayUnit(): DisplayUnit {
+  try {
+    return localStorage.getItem(DISPLAY_UNIT_KEY) === "litoshis" ? "litoshis" : "ltc";
+  } catch {
+    return "ltc";
+  }
+}
+
+function persistDisplayUnit(unit: DisplayUnit) {
+  try {
+    localStorage.setItem(DISPLAY_UNIT_KEY, unit);
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+function amountInputs(): HTMLInputElement[] {
+  return [el.sendAmount, el.mwebSendAmount, el.peginAmount, el.pegoutAmount, el.receiveAmount];
+}
+
+function syncAmountFieldLabels() {
+  const label = `Amount (${unitLabel()})`;
+  el.sendAmountLabel.textContent = label;
+  el.mwebSendAmountLabel.textContent = label;
+  el.peginAmountLabel.textContent = label;
+  el.pegoutAmountLabel.textContent = label;
+  el.receiveAmountLabel.textContent = `Request amount (optional, ${unitLabel()})`;
+  const placeholder = displayUnit === "litoshis" ? String(DUST_LITOSHIS) : "0.001";
+  for (const input of [el.sendAmount, el.mwebSendAmount, el.peginAmount, el.pegoutAmount]) {
+    input.placeholder = placeholder;
+    input.inputMode = displayUnit === "litoshis" ? "numeric" : "decimal";
+  }
+  el.receiveAmount.placeholder = displayUnit === "litoshis" ? "1000000" : "0.01";
+  el.receiveAmount.inputMode = displayUnit === "litoshis" ? "numeric" : "decimal";
+  el.settingsUnitLtc.checked = displayUnit === "ltc";
+  el.settingsUnitLitoshis.checked = displayUnit === "litoshis";
+}
+
+function setDisplayUnit(unit: DisplayUnit, opts: { clearAmbiguous?: boolean } = {}) {
+  const prev = displayUnit;
+  displayUnit = unit;
+  persistDisplayUnit(unit);
+  syncAmountFieldLabels();
+  if (opts.clearAmbiguous !== false && prev !== unit) {
+    for (const input of amountInputs()) {
+      if (!input.value.trim()) continue;
+      // Value typed for the other unit is ambiguous — clear rather than mis-parse.
+      input.value = "";
+    }
+  }
+  if (lastCombined) renderCombined(lastCombined);
+  else if (lastSummary) renderSummary(lastSummary);
+  if (txRecords.length) renderHistory(txRecords);
+  void refreshPublicReceiveQr();
 }
 
 function setPhase(next: Phase) {
@@ -976,6 +1145,7 @@ async function openConfirm(opts: {
   destination?: string;
   confirmLabel?: string;
   danger?: boolean;
+  afterDetail?: (body: HTMLElement) => void;
 }): Promise<boolean> {
   const warnings = opts.warning == null ? [] : Array.isArray(opts.warning) ? opts.warning : [opts.warning];
   const result = await openModal({
@@ -994,6 +1164,7 @@ async function openConfirm(opts: {
       }
       if (opts.rows?.length) body.appendChild(buildDetailList(opts.rows));
       if (opts.detail) appendParagraph(body, opts.detail, "hint");
+      opts.afterDetail?.(body);
     },
     actions: [
       { id: "cancel", label: "Cancel", kind: "ghost" },
@@ -1189,6 +1360,7 @@ function updateBusyUi() {
   el.btnSync.disabled = busy;
   el.btnAddress.disabled = busy;
   el.btnCopy.disabled = busy;
+  el.btnCopyPayment.disabled = busy;
   el.btnSend.disabled = busy;
   // A filled restore field means the user intends to restore; block Create so
   // the primary button can't silently generate a fresh wallet instead.
@@ -1238,22 +1410,103 @@ function setMwebVisible(visible: boolean) {
   }
 }
 
-function paymentUri(address: string): string {
-  return address.startsWith("ltcmweb") || address.startsWith("tmweb")
-    ? address
-    : `litecoin:${address}`;
+function isMwebAddress(address: string): boolean {
+  return address.startsWith("ltcmweb") || address.startsWith("tmweb");
 }
 
-async function renderQr(canvas: HTMLCanvasElement, address: string) {
-  const ctx = canvas.getContext("2d");
+/** BIP21 amount is always LTC decimal (not litoshis). */
+function satsToBip21Amount(sats: number): string {
+  const whole = Math.trunc(sats / 100_000_000);
+  const frac = Math.abs(sats % 100_000_000)
+    .toString()
+    .padStart(8, "0")
+    .replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : String(whole);
+}
+
+function buildPaymentUri(
+  address: string,
+  opts: { amountSats?: number | null; label?: string | null } = {},
+): string {
+  if (!address || isMwebAddress(address)) return address;
+  let uri = `litecoin:${address}`;
+  const params: string[] = [];
+  if (opts.amountSats != null && opts.amountSats > 0) {
+    params.push(`amount=${satsToBip21Amount(opts.amountSats)}`);
+  }
+  const label = opts.label?.trim();
+  if (label) params.push(`label=${encodeURIComponent(label)}`);
+  if (params.length) uri += `?${params.join("&")}`;
+  return uri;
+}
+
+function parsePaymentUri(text: string): ParsedPaymentUri | null {
+  const raw = text.trim();
+  if (!raw) return null;
+  const m = raw.match(/^litecoin:([^?/#]+)(?:\?(.*))?$/i);
+  if (!m) return null;
+  const address = decodeURIComponent(m[1] ?? "").trim();
+  if (!address) return null;
+  let amountSats: number | null = null;
+  let label: string | null = null;
+  const query = m[2] ?? "";
+  if (query) {
+    for (const part of query.split("&")) {
+      if (!part) continue;
+      const eq = part.indexOf("=");
+      const key = (eq >= 0 ? part.slice(0, eq) : part).toLowerCase();
+      const value = eq >= 0 ? part.slice(eq + 1) : "";
+      if (key === "amount") {
+        const parsed = parseLtcToSats(decodeURIComponent(value));
+        if (parsed == null) return null;
+        amountSats = parsed;
+      } else if (key === "label") {
+        try {
+          label = decodeURIComponent(value.replace(/\+/g, " "));
+        } catch {
+          label = value;
+        }
+      }
+    }
+  }
+  return { address, amountSats, label };
+}
+
+function publicReceiveRequest(): { amountSats: number | null; label: string | null } {
+  const amountRaw = el.receiveAmount.value.trim();
+  let amountSats: number | null = null;
+  if (amountRaw) {
+    amountSats = parseAmountToSats(amountRaw);
+  }
+  const label = el.receiveLabel.value.trim() || null;
+  return { amountSats, label };
+}
+
+async function refreshPublicReceiveQr() {
+  const address = el.address.textContent?.trim() ?? "";
   if (!address) {
+    await renderQr(el.receiveQr, "");
+    return;
+  }
+  const { amountSats, label } = publicReceiveRequest();
+  // Invalid optional amount: still show address-only QR rather than a broken URI.
+  const uri = buildPaymentUri(address, {
+    amountSats: amountSats != null && amountSats > 0 ? amountSats : null,
+    label,
+  });
+  await renderQr(el.receiveQr, uri);
+}
+
+async function renderQr(canvas: HTMLCanvasElement, payload: string) {
+  const ctx = canvas.getContext("2d");
+  if (!payload) {
     ctx?.clearRect(0, 0, canvas.width, canvas.height);
     return;
   }
   // Render at device resolution, then pin the CSS box so it stays crisp on Retina.
   const dpr = Math.min(3, Math.max(1, Math.round(window.devicePixelRatio || 1)));
   try {
-    await QRCode.toCanvas(canvas, paymentUri(address), {
+    await QRCode.toCanvas(canvas, payload, {
       errorCorrectionLevel: "M",
       margin: 2,
       width: QR_CSS_SIZE * dpr,
@@ -1514,11 +1767,76 @@ function setSecurityChecklistDismissed(dismissed: boolean) {
   }
 }
 
+function isFirstReceiveSeen(): boolean {
+  try {
+    return localStorage.getItem(FIRST_RECEIVE_SEEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setFirstReceiveSeen(seen: boolean) {
+  try {
+    if (seen) localStorage.setItem(FIRST_RECEIVE_SEEN_KEY, "1");
+    else localStorage.removeItem(FIRST_RECEIVE_SEEN_KEY);
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
 function clearBackupLocalFlags() {
   setBackupVerified(false);
   setBackupBannerDismissed(false);
   setMwebCoachSeen(false);
   setSecurityChecklistDismissed(false);
+  setFirstReceiveSeen(false);
+  sawNonZeroBalance = false;
+  lastPendingSats = 0;
+  lastCombined = null;
+  lastSummary = null;
+}
+
+function pulseRecentHistoryRows() {
+  const recent = el.txListRecent.querySelector<HTMLElement>(".tx-row");
+  if (!recent) return;
+  const txid = recent.dataset.txid;
+  const rows = [
+    recent,
+    ...el.txList.querySelectorAll<HTMLElement>(".tx-row"),
+  ].filter((row, index, all) => all.indexOf(row) === index);
+  for (const row of rows) {
+    if (txid && row.dataset.txid !== txid) continue;
+    row.classList.remove("tx-row-pulse");
+    // Restart animation if the class was already present.
+    void row.offsetWidth;
+    row.classList.add("tx-row-pulse");
+    window.setTimeout(() => row.classList.remove("tx-row-pulse"), 1_500);
+  }
+}
+
+async function showFirstReceiveModal() {
+  await openModal({
+    title: "Funds arrived",
+    build: (body) => {
+      appendParagraph(
+        body,
+        "Funds arrived on Public. Use Swap to move to Private after they confirm, if you want confidentiality.",
+        "lede",
+      );
+      appendParagraph(
+        body,
+        "Most exchanges pay to a public ltc1 address first. Private (MWEB) is optional.",
+        "hint",
+      );
+    },
+    actions: [{ id: "done", label: "Got it", kind: "primary" }],
+    focus: () => el.modalActions.querySelector<HTMLElement>('[data-action="done"]'),
+  });
+  setFirstReceiveSeen(true);
+}
+
+function transparentPendingSats(s: WalletSummary): number {
+  return s.trusted_pending_sats + s.untrusted_pending_sats + s.immature_sats;
 }
 
 function updateBackupBanner() {
@@ -1534,7 +1852,7 @@ function updateMaturityBanner(immatureSats: number) {
   const show = currentPhase === "ready" && immatureSats > 0;
   el.maturityBanner.hidden = !show;
   if (show) {
-    el.maturityBannerText.textContent = `${formatLtc(immatureSats)} maturing — not spendable privately yet.`;
+    el.maturityBannerText.textContent = `${formatAmount(immatureSats)} maturing — not spendable privately yet.`;
   }
 }
 
@@ -1650,32 +1968,34 @@ function updateSecurityChecklist() {
 }
 
 function renderSummary(s: WalletSummary) {
+  lastSummary = s;
   el.networkBadge.textContent = s.network;
   el.balanceTotal.classList.remove("skeleton");
-  el.balanceTotal.textContent = formatLtc(s.total_sats);
+  el.balanceTotal.textContent = formatAmount(s.total_sats);
   lastTotalSats = s.total_sats;
-  el.balanceSats.textContent = formatLitoshis(s.total_sats);
+  if (s.total_sats > 0) sawNonZeroBalance = true;
+  el.balanceSats.textContent = formatAmountSubtitle(s.total_sats);
   renderFiat();
-  el.balanceConfirmed.textContent = formatLtc(s.confirmed_sats);
+  el.balanceConfirmed.textContent = formatAmount(s.confirmed_sats);
   el.balanceTip.textContent = s.tip_height.toLocaleString("en-US");
   el.address.textContent = s.receive_address;
-  void renderQr(el.receiveQr, s.receive_address);
+  void refreshPublicReceiveQr();
 
   // Spendable public balance shown on the Public toggle segments.
-  const publicBalance = formatLtc(s.confirmed_sats);
+  const publicBalance = formatAmount(s.confirmed_sats);
   el.sendBalancePublic.textContent = publicBalance;
   el.receiveBalancePublic.textContent = publicBalance;
   el.swapBalancePublic.textContent = publicBalance;
 
   const pendingParts: string[] = [];
   if (s.trusted_pending_sats > 0) {
-    pendingParts.push(`trusted pending ${formatLtc(s.trusted_pending_sats)}`);
+    pendingParts.push(`trusted pending ${formatAmount(s.trusted_pending_sats)}`);
   }
   if (s.untrusted_pending_sats > 0) {
-    pendingParts.push(`untrusted pending ${formatLtc(s.untrusted_pending_sats)}`);
+    pendingParts.push(`untrusted pending ${formatAmount(s.untrusted_pending_sats)}`);
   }
   if (s.immature_sats > 0) {
-    pendingParts.push(`immature ${formatLtc(s.immature_sats)}`);
+    pendingParts.push(`immature ${formatAmount(s.immature_sats)}`);
   }
   if (pendingParts.length > 0) {
     el.balancePending.hidden = false;
@@ -1694,16 +2014,18 @@ function renderSummary(s: WalletSummary) {
 }
 
 function renderCombined(c: CombinedSummary) {
+  lastCombined = c;
   renderSummary(c.transparent);
   // Hero "Total balance" is wallet-wide: transparent + MWEB.
   const grandTotal = c.transparent.total_sats + c.mweb_total_sats;
-  el.balanceTotal.textContent = formatLtc(grandTotal);
-  el.balanceSats.textContent = formatLitoshis(grandTotal);
+  el.balanceTotal.textContent = formatAmount(grandTotal);
+  el.balanceSats.textContent = formatAmountSubtitle(grandTotal);
   lastTotalSats = grandTotal;
+  if (grandTotal > 0) sawNonZeroBalance = true;
   renderFiat();
   setMwebVisible(true);
 
-  let mwebText = formatLtc(c.mweb_total_sats);
+  let mwebText = formatAmount(c.mweb_total_sats);
   if (c.mweb_stale) {
     mwebText += c.mweb_synced_height != null
       ? ` · stale as of height ${c.mweb_synced_height}`
@@ -1712,14 +2034,14 @@ function renderCombined(c: CombinedSummary) {
   el.balanceMweb.textContent = mwebText;
 
   const detailParts: string[] = [];
-  detailParts.push(`Spendable ${formatLtc(c.mweb_confirmed_sats)}`);
+  detailParts.push(`Spendable ${formatAmount(c.mweb_confirmed_sats)}`);
   if (c.mweb_immature_sats > 0) {
     detailParts.push(
-      `Maturing ${formatLtc(c.mweb_immature_sats)} (available after ~${MWEB_PEGIN_MATURITY_BLOCKS} confirmations)`,
+      `Maturing ${formatAmount(c.mweb_immature_sats)} (available after ~${MWEB_PEGIN_MATURITY_BLOCKS} confirmations)`,
     );
   }
   if (c.mweb_unconfirmed_sats > 0) {
-    detailParts.push(`Unconfirmed private ${formatLtc(c.mweb_unconfirmed_sats)}`);
+    detailParts.push(`Unconfirmed private ${formatAmount(c.mweb_unconfirmed_sats)}`);
   }
   const showDetail =
     c.mweb_immature_sats > 0 ||
@@ -1736,10 +2058,10 @@ function renderCombined(c: CombinedSummary) {
   }
 
   // Private Send shows only spendable — maturing must never look sendable.
-  el.sendBalancePrivate.textContent = formatLtc(c.mweb_confirmed_sats);
-  let privateChip = formatLtc(c.mweb_confirmed_sats);
+  el.sendBalancePrivate.textContent = formatAmount(c.mweb_confirmed_sats);
+  let privateChip = formatAmount(c.mweb_confirmed_sats);
   if (c.mweb_immature_sats > 0) {
-    privateChip += ` · maturing ${formatLtc(c.mweb_immature_sats)}`;
+    privateChip += ` · maturing ${formatAmount(c.mweb_immature_sats)}`;
   }
   el.receiveBalancePrivate.textContent = privateChip;
   el.swapBalancePrivate.textContent = privateChip;
@@ -1782,8 +2104,8 @@ function txDirection(tx: TxRecord): "in" | "out" {
   return tx.net_sats >= 0 ? "in" : "out";
 }
 
-function formatSignedLtc(tx: TxRecord): string {
-  return `${txDirection(tx) === "in" ? "+" : "−"}${formatLtc(Math.abs(tx.net_sats))}`;
+function formatSignedAmount(tx: TxRecord): string {
+  return `${txDirection(tx) === "in" ? "+" : "−"}${formatAmount(Math.abs(tx.net_sats))}`;
 }
 
 function buildTxRow(tx: TxRecord, index: number): HTMLLIElement {
@@ -1795,7 +2117,7 @@ function buildTxRow(tx: TxRecord, index: number): HTMLLIElement {
 
   const amount = document.createElement("span");
   amount.className = dir === "in" ? "tx-amt in" : "tx-amt";
-  amount.textContent = formatSignedLtc(tx);
+  amount.textContent = formatSignedAmount(tx);
 
   const meta = document.createElement("span");
   meta.className = "tx-meta";
@@ -1834,8 +2156,9 @@ function buildTxRow(tx: TxRecord, index: number): HTMLLIElement {
   const li = document.createElement("li");
   li.className = "tx-row";
   li.tabIndex = 0;
+  li.dataset.txid = tx.txid;
   li.setAttribute("role", "button");
-  li.setAttribute("aria-label", `Transaction ${formatSignedLtc(tx)} — show details`);
+  li.setAttribute("aria-label", `Transaction ${formatSignedAmount(tx)} — show details`);
   li.append(icon, main, side);
   li.addEventListener("click", () => void openTxDetail(index));
   li.addEventListener("keydown", (event) => {
@@ -1887,8 +2210,8 @@ async function openTxDetail(index: number) {
       ["Time", formatTxTimeLong(tx.timestamp)],
     ];
     if (tx.height != null) rows.push(["Block height", tx.height.toLocaleString("en-US")]);
-    if (tx.received_sats > 0) rows.push(["Received", formatLtc(tx.received_sats)]);
-    if (tx.sent_sats > 0) rows.push(["Sent", formatLtc(tx.sent_sats)]);
+    if (tx.received_sats > 0) rows.push(["Received", formatAmount(tx.received_sats)]);
+    if (tx.sent_sats > 0) rows.push(["Sent", formatAmount(tx.sent_sats)]);
     rows.push([
       "Fee",
       tx.fee_sats != null ? `${tx.fee_sats.toLocaleString("en-US")} litoshis` : "unknown",
@@ -1935,7 +2258,7 @@ async function openTxDetail(index: number) {
       build: (body) => {
         const amount = document.createElement("p");
         amount.className = dir === "in" ? "detail-amount in" : "detail-amount";
-        amount.textContent = formatSignedLtc(tx);
+        amount.textContent = formatSignedAmount(tx);
         body.append(amount, buildDetailList(rows));
         if (!canExplore) {
           appendParagraph(
@@ -2240,8 +2563,13 @@ async function boot() {
 }
 
 async function enterReady() {
+  displayUnit = readDisplayUnit();
+  syncAmountFieldLabels();
   const s = await invoke<WalletSummary>("load_wallet");
   renderSummary(s);
+  // Legacy installs that already hold funds skip the first-receive modal.
+  if (lastTotalSats > 0 && !isFirstReceiveSeen()) setFirstReceiveSeen(true);
+  lastPendingSats = transparentPendingSats(s);
   setPhase("ready");
   setView("balance");
   await refreshCombined();
@@ -2384,6 +2712,9 @@ async function runSync(opts: { quiet: boolean }): Promise<boolean> {
   if (!opts.quiet) setError(null);
   updateBusyUi();
   startMwebProgressPolling();
+  const prevPending = lastPendingSats;
+  const prevTotal = lastTotalSats;
+  const hadFundsBefore = prevTotal > 0 || sawNonZeroBalance;
   try {
     const result = await invoke<SyncResult>("sync_wallet");
     // Lock may have completed while sync was finishing.
@@ -2396,10 +2727,12 @@ async function runSync(opts: { quiet: boolean }): Promise<boolean> {
       result.mweb_ms > 0
         ? `${formatMs(result.electrum_ms)} + ${formatMs(result.mweb_ms)} MWEB`
         : formatMs(result.electrum_ms);
-    const newTxs =
-      result.new_txs > 0
-        ? ` · ${result.new_txs} new transaction${result.new_txs === 1 ? "" : "s"}`
-        : "";
+    const pendingNow =
+      transparentPendingSats(result.summary) +
+      (lastCombined?.mweb_unconfirmed_sats ?? 0);
+    const pendingRose = pendingNow > prevPending;
+    const receivedSignal = result.new_txs > 0 || pendingRose;
+    lastPendingSats = pendingNow;
     if (result.electrum_server) {
       el.settingsActiveServer.hidden = false;
       el.settingsActiveServer.textContent = `Last sync used: ${result.electrum_server}`;
@@ -2408,8 +2741,18 @@ async function runSync(opts: { quiet: boolean }): Promise<boolean> {
       // Cross-check findings outrank the feel-good sync message.
       for (const warning of result.warnings) console.warn(warning);
       setStatus(result.warnings[0], "error");
+    } else if (receivedSignal) {
+      setStatus(`Received funds — syncing details… (${timing})`, "success");
+      pulseRecentHistoryRows();
+      const firstReceive =
+        !isFirstReceiveSeen() && !hadFundsBefore && lastTotalSats > 0;
+      if (firstReceive) void showFirstReceiveModal();
+      else if (!isFirstReceiveSeen() && lastTotalSats > 0) {
+        // Legacy wallet already funded before this feature — don't nag.
+        setFirstReceiveSeen(true);
+      }
     } else {
-      setStatus(`Synced in ${timing}${newTxs}`, "success");
+      setStatus(`Synced in ${timing}`, "success");
     }
     return true;
   } catch (e) {
@@ -2612,7 +2955,7 @@ el.btnAddress.addEventListener("click", async () => {
   try {
     const address = await invoke<string>("get_receive_address");
     el.address.textContent = address;
-    await renderQr(el.receiveQr, address);
+    await refreshPublicReceiveQr();
     setStatus("New receive address generated.", "success");
   } catch (e) {
     setError(String(e));
@@ -2634,6 +2977,101 @@ el.btnCopy.addEventListener("click", async () => {
   } catch {
     setStatus("Copy failed — select the address manually.", "error");
   }
+});
+
+el.btnCopyPayment.addEventListener("click", async () => {
+  const address = el.address.textContent?.trim() ?? "";
+  if (!address) {
+    setStatus("No address to copy yet.", "error");
+    return;
+  }
+  const { amountSats, label } = publicReceiveRequest();
+  if (el.receiveAmount.value.trim() && (amountSats == null || amountSats <= 0)) {
+    setStatus(amountError("request", el.receiveAmount.value), "error");
+    return;
+  }
+  const uri = buildPaymentUri(address, { amountSats, label });
+  try {
+    await navigator.clipboard.writeText(uri);
+    flashLabel(el.btnCopyPayment, "Copied");
+  } catch {
+    setStatus("Copy failed — select the payment link manually.", "error");
+  }
+});
+
+function tryParseSendPaymentUri(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!/^litecoin:/i.test(trimmed)) return false;
+  const parsed = parsePaymentUri(trimmed);
+  if (!parsed) {
+    setStatus("Could not parse that payment request.", "error");
+    return true;
+  }
+  el.sendAddress.value = parsed.address;
+  if (parsed.amountSats != null) {
+    el.sendAmount.value = formatAmountInput(parsed.amountSats);
+    el.sendDrain.checked = false;
+  }
+  setStatus("Parsed payment request.", "success");
+  updateBusyUi();
+  return true;
+}
+
+el.sendAddress.addEventListener("paste", (event) => {
+  const text = event.clipboardData?.getData("text") ?? "";
+  if (!/^litecoin:/i.test(text.trim())) return;
+  event.preventDefault();
+  tryParseSendPaymentUri(text);
+});
+
+el.sendAddress.addEventListener("blur", () => {
+  tryParseSendPaymentUri(el.sendAddress.value);
+});
+
+el.receiveAmount.addEventListener("input", () => {
+  void refreshPublicReceiveQr();
+});
+el.receiveLabel.addEventListener("input", () => {
+  void refreshPublicReceiveQr();
+});
+
+function cycleDisplayUnit() {
+  setDisplayUnit(displayUnit === "ltc" ? "litoshis" : "ltc");
+}
+
+el.balanceTotal.addEventListener("click", () => cycleDisplayUnit());
+el.balanceTotal.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    cycleDisplayUnit();
+  }
+});
+
+el.settingsUnitLtc.addEventListener("change", () => {
+  if (el.settingsUnitLtc.checked) setDisplayUnit("ltc");
+});
+el.settingsUnitLitoshis.addEventListener("change", () => {
+  if (el.settingsUnitLitoshis.checked) setDisplayUnit("litoshis");
+});
+
+el.feeCustom.addEventListener("input", () => {
+  const raw = el.feeCustom.value.trim();
+  if (!raw) {
+    customFeeActive = false;
+    selectedFeeRateSatVb = null;
+    el.sendFeeHint.textContent = useExplorerFeeHints
+      ? "Network fee is calculated automatically."
+      : el.sendFeeHint.textContent;
+    void refreshFeeLadder();
+    return;
+  }
+  const n = Math.trunc(Number(raw));
+  if (!Number.isFinite(n) || n < 1) return;
+  customFeeActive = true;
+  selectedFeeRateSatVb = n;
+  el.sendFeeHint.textContent = `Using custom ${n} sat/vB.`;
+  if (useExplorerFeeHints) void refreshFeeLadder();
+  else void refreshFeeEstimate();
 });
 
 el.btnCopyMweb.addEventListener("click", async () => {
@@ -2730,19 +3168,24 @@ el.sendForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (syncing || sending) return;
 
-  const address = el.sendAddress.value.trim();
   const drain = el.sendDrain.checked;
-
-  if (!address) {
-    setError("Enter a destination address.");
+  // Prefer URI parse if the address field still holds a payment request.
+  tryParseSendPaymentUri(el.sendAddress.value);
+  const address = el.sendAddress.value.trim();
+  if (!address || /^litecoin:/i.test(address)) {
+    setError(
+      !address
+        ? "Enter a destination address."
+        : "Could not parse that payment request.",
+    );
     return;
   }
 
   let amount_sats = 0;
   if (!drain) {
-    const parsed = parseLtcToSats(el.sendAmount.value);
+    const parsed = parseAmountToSats(el.sendAmount.value);
     if (parsed == null) {
-      setError("Amount must be a valid LTC value (max 8 decimals).");
+      setError(amountError("send", el.sendAmount.value));
       return;
     }
     if (parsed < DUST_LITOSHIS) {
@@ -2772,9 +3215,13 @@ el.sendForm.addEventListener("submit", async (event) => {
     hideLoading();
   }
 
-  const amountLabel = formatLtc(preview.amount_sats);
+  const amountLabel = formatAmount(preview.amount_sats);
   const feeSource =
-    selectedFeeRateSatVb != null ? "explorer suggestion" : "estimated";
+    selectedFeeRateSatVb != null
+      ? customFeeActive
+        ? "custom"
+        : "explorer suggestion"
+      : "estimated";
   const totalLeave = preview.amount_sats + preview.fee_sats;
   const confirmed = await openConfirm({
     title: "Review transaction",
@@ -2786,8 +3233,8 @@ el.sendForm.addEventListener("submit", async (event) => {
       : undefined,
     rows: [
       ["Amount", amountLabel],
-      ["Network fee", formatLtc(preview.fee_sats)],
-      ["Total leaving wallet", formatLtc(totalLeave)],
+      ["Network fee", formatAmount(preview.fee_sats)],
+      ["Total leaving wallet", formatAmount(totalLeave)],
       ...(drain ? ([["Emptying", "All transparent funds"]] as DetailRow[]) : []),
     ],
     detail: `Fee rate ${preview.fee_rate_sat_vb} sat/vB (${feeSource}).`,
@@ -2826,6 +3273,8 @@ el.sendForm.addEventListener("submit", async (event) => {
   el.sendAmount.value = "";
   el.sendDrain.checked = false;
   selectedFeeRateSatVb = null;
+  customFeeActive = false;
+  el.feeCustom.value = "";
   el.sendFeeHint.textContent = "Network fee is calculated automatically.";
   void refreshFeeLadder();
   updateBusyUi();
@@ -2837,7 +3286,7 @@ el.sendForm.addEventListener("submit", async (event) => {
     rows: [
       ["To", address, true],
       ["Amount", amountLabel],
-      ["Network fee", formatLtc(result.fee_sats)],
+      ["Network fee", formatAmount(result.fee_sats)],
       ["Transaction ID", result.txid, true],
     ],
     copy: { value: result.txid, label: "Copy ID", toast: "Transaction ID copied." },
@@ -2894,9 +3343,9 @@ el.btnSaveSettings.addEventListener("click", async () => {
       void refreshSpotPrice();
     }
     if (!useExplorerFeeHints) {
-      selectedFeeRateSatVb = null;
+      if (!customFeeActive) selectedFeeRateSatVb = null;
       renderFeeChips(null);
-      el.sendFeeHint.textContent = "Network fee is calculated automatically.";
+      void refreshFeeEstimate();
     } else {
       void refreshFeeLadder();
     }
@@ -2916,7 +3365,7 @@ el.btnPegin.addEventListener("click", async () => {
   const drain = el.peginDrain.checked;
   let amount_sats = 0;
   if (!drain) {
-    const parsed = parseLtcToSats(el.peginAmount.value);
+    const parsed = parseAmountToSats(el.peginAmount.value);
     if (parsed == null || parsed <= 0) {
       setError(amountError("peg-in", el.peginAmount.value));
       return;
@@ -2958,12 +3407,23 @@ el.btnPegin.addEventListener("click", async () => {
       "A peg-in moves transparent funds onto the MWEB side of the chain, where balances and amounts are confidential. The public broadcast pays a miner fee; MWEB credits pay a private network fee.",
     warning: warnings,
     rows: [
-      ["Amount", formatLtc(preview.amount_sats)],
-      ["Private credit", formatLtc(preview.private_credit_sats)],
-      ["Private network fee (MWEB)", formatLtc(preview.mweb_fee_sats)],
-      ["Miner fee (public chain)", formatLtc(preview.transparent_fee_sats)],
-      ["Leaves transparent", formatLtc(preview.total_from_transparent_sats)],
+      ["Amount", formatAmount(preview.amount_sats)],
+      ["Private credit", formatAmount(preview.private_credit_sats)],
+      ["Private network fee (MWEB)", formatAmount(preview.mweb_fee_sats)],
+      ["Miner fee (public chain)", formatAmount(preview.transparent_fee_sats)],
+      ["Leaves transparent", formatAmount(preview.total_from_transparent_sats)],
     ],
+    afterDetail: (body) => {
+      const details = document.createElement("details");
+      details.className = "fee-why";
+      const summary = document.createElement("summary");
+      summary.textContent = "Why two fees?";
+      const p = document.createElement("p");
+      p.textContent =
+        "The miner fee pays Litecoin miners to confirm the public peg-in transaction. The private network fee is burned on MWEB when your coins are credited. Both are required for a peg-in.";
+      details.append(summary, p);
+      body.appendChild(details);
+    },
     confirmLabel: drain ? "Move all to private" : "Move to private",
   });
   if (!confirmed) {
@@ -3002,8 +3462,8 @@ el.btnPegin.addEventListener("click", async () => {
     title: "Peg-in sent",
     message: "Broadcast to the network. The funds become spendable on the MWEB side once mature.",
     rows: [
-      ["Private credit", formatLtc(preview.private_credit_sats)],
-      ["Total fees", formatLtc(result.fee_sats)],
+      ["Private credit", formatAmount(preview.private_credit_sats)],
+      ["Total fees", formatAmount(result.fee_sats)],
       ["Matures in", `${result.maturity_blocks} blocks`],
       ["Transaction ID", result.txid, true],
     ],
@@ -3024,7 +3484,7 @@ el.btnMwebSend.addEventListener("click", async () => {
   const drain = el.mwebSendDrain.checked;
   let amount_sats = 0;
   if (!drain) {
-    const parsed = parseLtcToSats(el.mwebSendAmount.value);
+    const parsed = parseAmountToSats(el.mwebSendAmount.value);
     if (parsed == null) {
       setError(amountError("MWEB send", el.mwebSendAmount.value));
       return;
@@ -3060,9 +3520,9 @@ el.btnMwebSend.addEventListener("click", async () => {
       ? "Network fee is at least half of the amount you are sending. You can still proceed if this is intentional."
       : undefined,
     rows: [
-      ["Amount", formatLtc(preview.amount_sats)],
-      ["Network fee", formatLtc(preview.fee_sats)],
-      ["Total leaving private", formatLtc(preview.amount_sats + preview.fee_sats)],
+      ["Amount", formatAmount(preview.amount_sats)],
+      ["Network fee", formatAmount(preview.fee_sats)],
+      ["Total leaving private", formatAmount(preview.amount_sats + preview.fee_sats)],
     ],
     confirmLabel: drain ? "Send all private" : "Send private",
   });
@@ -3103,8 +3563,8 @@ el.btnMwebSend.addEventListener("click", async () => {
       "Broadcast over the MWEB network. Private transfers are not listed on public explorers — that is expected. Keep the Kernel ID as your reference.",
     rows: [
       ["To", address, true],
-      ["Amount", formatLtc(preview.amount_sats)],
-      ["Network fee", formatLtc(result.fee_sats)],
+      ["Amount", formatAmount(preview.amount_sats)],
+      ["Network fee", formatAmount(result.fee_sats)],
       ["Kernel ID", result.wtxid, true],
     ],
     copy: { value: result.wtxid, label: "Copy ID", toast: "Kernel ID copied." },
@@ -3116,7 +3576,7 @@ el.btnPegout.addEventListener("click", async () => {
   const drain = el.pegoutDrain.checked;
   let amount_sats = 0;
   if (!drain) {
-    const parsed = parseLtcToSats(el.pegoutAmount.value);
+    const parsed = parseAmountToSats(el.pegoutAmount.value);
     if (parsed == null) {
       setError(amountError("swap", el.pegoutAmount.value));
       return;
@@ -3156,9 +3616,9 @@ el.btnPegout.addEventListener("click", async () => {
       ? "Network fee is at least half of the amount you are moving. You can still proceed if this is intentional."
       : undefined,
     rows: [
-      ["Amount", formatLtc(preview.amount_sats)],
-      ["Network fee", formatLtc(preview.fee_sats)],
-      ["Total leaving private", formatLtc(preview.amount_sats + preview.fee_sats)],
+      ["Amount", formatAmount(preview.amount_sats)],
+      ["Network fee", formatAmount(preview.fee_sats)],
+      ["Total leaving private", formatAmount(preview.amount_sats + preview.fee_sats)],
     ],
     detail: `Destination dust floor is ${preview.dust_sats.toLocaleString("en-US")} litoshis.`,
     confirmLabel: drain ? "Move all to public" : "Move to public",
@@ -3199,12 +3659,14 @@ el.btnPegout.addEventListener("click", async () => {
       "Broadcast to the network. The public funds arrive once the swap confirms. Private transfers are not listed on public explorers — that is expected. Keep the Kernel ID as your reference.",
     rows: [
       ["To (your new public address)", address, true],
-      ["Amount", formatLtc(preview.amount_sats)],
-      ["Network fee", formatLtc(result.fee_sats)],
+      ["Amount", formatAmount(preview.amount_sats)],
+      ["Network fee", formatAmount(result.fee_sats)],
       ["Kernel ID", result.wtxid, true],
     ],
     copy: { value: result.wtxid, label: "Copy ID", toast: "Kernel ID copied." },
   });
 });
 
+displayUnit = readDisplayUnit();
+syncAmountFieldLabels();
 void boot();

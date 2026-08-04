@@ -372,7 +372,15 @@
             <div class="hero">
               <div class="hero-inner">
                 <span class="hero-label">Total balance</span>
-                <p class="balance-total skeleton" id="balance-total">0.00000000 LTC</p>
+                <p
+                  class="balance-total skeleton"
+                  id="balance-total"
+                  role="button"
+                  tabindex="0"
+                  title="Tap to switch LTC / litoshis"
+                >
+                  0.00000000 LTC
+                </p>
                 <p class="balance-fiat" id="balance-fiat" hidden></p>
                 <p class="balance-sats" id="balance-sats">(0 litoshis)</p>
                 <p class="balance-note" id="balance-pending" hidden></p>
@@ -462,7 +470,7 @@
                         />
                       </label>
                       <label class="field">
-                        <span class="field-label">Amount (LTC)</span>
+                        <span class="field-label" id="send-amount-label">Amount (LTC)</span>
                         <input
                           id="send-amount"
                           type="text"
@@ -478,6 +486,17 @@
                       <div class="fee-chips" id="fee-chips" hidden>
                         <span class="field-label">Fee rate</span>
                         <div class="fee-chip-row" id="fee-chip-row" role="group" aria-label="Suggested fee rates"></div>
+                        <label class="field fee-custom-field" id="fee-custom-field" hidden>
+                          <span class="field-label">Custom sat/vB</span>
+                          <input
+                            id="fee-custom"
+                            type="number"
+                            min="1"
+                            step="1"
+                            inputmode="numeric"
+                            placeholder="e.g. 2"
+                          />
+                        </label>
                       </div>
                       <p class="hint" id="send-fee-hint">Network fee is calculated automatically.</p>
                       <div class="row">
@@ -500,7 +519,7 @@
                         />
                       </label>
                       <label class="field">
-                        <span class="field-label">Amount (LTC)</span>
+                        <span class="field-label" id="mweb-send-amount-label">Amount (LTC)</span>
                         <input id="mweb-send-amount" type="text" inputmode="decimal" placeholder="0.001" />
                       </label>
                       <label class="check">
@@ -551,13 +570,38 @@
                       </div>
                       <div class="receive-meta">
                         <p class="mono receive-address" id="address"></p>
+                        <div class="receive-request">
+                          <label class="field">
+                            <span class="field-label" id="receive-amount-label">Request amount (optional, LTC)</span>
+                            <input
+                              id="receive-amount"
+                              type="text"
+                              inputmode="decimal"
+                              placeholder="0.01"
+                              autocomplete="off"
+                            />
+                          </label>
+                          <label class="field">
+                            <span class="field-label">Label (optional)</span>
+                            <input
+                              id="receive-label"
+                              type="text"
+                              placeholder="Invoice, tip jar…"
+                              autocomplete="off"
+                              maxlength="80"
+                            />
+                          </label>
+                        </div>
                         <div class="row">
                           <button type="button" id="btn-copy" class="btn btn-primary">
                             <svg class="icon" viewBox="0 0 24 24" aria-hidden="true">
                               <rect x="9" y="9" width="11" height="11" rx="2" />
                               <path d="M15 5.5A1.5 1.5 0 0 0 13.5 4H6a2 2 0 0 0-2 2v7.5A1.5 1.5 0 0 0 5.5 15" />
                             </svg>
-                            <span class="btn-label">Copy</span>
+                            <span class="btn-label">Copy address</span>
+                          </button>
+                          <button type="button" id="btn-copy-payment" class="btn btn-secondary">
+                            <span class="btn-label">Copy payment link</span>
                           </button>
                           <button type="button" id="btn-address" class="btn btn-secondary">
                             <span class="btn-label">New address</span>
@@ -565,7 +609,7 @@
                         </div>
                         <p class="hint">
                           A fresh address per payment keeps your history harder to link. Old addresses keep
-                          working.
+                          working. Amount requests use a BIP21 payment link (Public only).
                         </p>
                       </div>
                     </div>
@@ -588,7 +632,8 @@
                         </div>
                         <p class="hint">
                           A stealth address for confidential transfers from MWEB-aware wallets. It can be
-                          reused without linking your payments.
+                          reused without linking your payments. Amount requests are Public-only for now —
+                          Private QR codes encode the address alone.
                         </p>
                       </div>
                     </div>
@@ -634,7 +679,7 @@
                         until they mature (~6 confirmations).
                       </p>
                       <label class="field">
-                        <span class="field-label">Amount (LTC)</span>
+                        <span class="field-label" id="pegin-amount-label">Amount (LTC)</span>
                         <input id="pegin-amount" type="text" inputmode="decimal" placeholder="0.001" />
                       </label>
                       <label class="check">
@@ -657,7 +702,7 @@
                         <code>ltc1</code> address of your own, generated automatically.
                       </p>
                       <label class="field">
-                        <span class="field-label">Amount (LTC)</span>
+                        <span class="field-label" id="pegout-amount-label">Amount (LTC)</span>
                         <input id="pegout-amount" type="text" inputmode="decimal" placeholder="0.001" />
                       </label>
                       <label class="check">
@@ -776,6 +821,25 @@
                 <input id="settings-show-fiat" type="checkbox" />
                 <span>Show LTC/USD under balance</span>
               </label>
+              <fieldset class="unit-fieldset">
+                <legend class="field-label">Display unit</legend>
+                <div class="unit-toggle" role="radiogroup" aria-label="Display unit">
+                  <label class="unit-option">
+                    <input type="radio" name="settings-display-unit" id="settings-unit-ltc" value="ltc" checked />
+                    <span>LTC</span>
+                  </label>
+                  <label class="unit-option">
+                    <input
+                      type="radio"
+                      name="settings-display-unit"
+                      id="settings-unit-litoshis"
+                      value="litoshis"
+                    />
+                    <span>litoshis</span>
+                  </label>
+                </div>
+                <span class="hint">Also cycles when you tap the balance on the home screen.</span>
+              </fieldset>
               <label class="check">
                 <input id="settings-fee-hints" type="checkbox" />
                 <span>Show explorer fee-rate suggestions on send</span>

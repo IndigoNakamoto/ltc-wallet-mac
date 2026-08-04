@@ -53,7 +53,8 @@ Boot → Unlock | Migrate | Onboarding → Mnemonic backup → verify quiz → H
 
 - **Done (P0):** Hard-gated recovery-phrase quiz after create; wallet passphrase minimum 8 chars + strength meter on Create/Migrate/Restore; first-funds backup banner for unverified/legacy installs; send/swap review shows full destination, type badge, total leaving wallet, and high-fee warning (≥50% of amount).
 - **Done (P1):** Public/Private first-use coach (`ltc-mweb-coach-seen`); empty-wallet funding CTA → Public Receive; peg-in maturity as spendable vs maturing (+ unconfirmed private, History maturing pill); Swap dual-fee labels + MWEB “no explorer” success copy / kind-aware litview; progressive security checklist at ≥1 LTC (`ltc-security-checklist-dismissed`).
-- **Next (P2):** Unit display preference, BIP21 request/parse, fee chips/custom, received-payment feedback.
+- **Done (P2):** Display unit LTC|litoshis (`ltc-display-unit`, Settings + hero tap); Public BIP21 amount/label QR + copy payment link + Send URI parse; fee chips time labels + Economy + custom sat/vB + `estimate_fee` when explorer hints off; receive toast/history pulse + first-receive modal (`ltc-first-receive-seen`).
+- **Next (P3):** Hide balance, send-side address reuse warnings, network privacy disclosure panel, transaction labels.
 
 ## Implementation status
 
@@ -65,6 +66,7 @@ Boot → Unlock | Migrate | Onboarding → Mnemonic backup → verify quiz → H
 6. Live MWEB E2E against archive peer + RPC; notarized ship
 7. UX P0 fund-loss safety (backup verify, passphrase gate, send confirm)
 8. UX P1 MWEB comprehension (coach, funding CTA, maturity, Swap fees/explorer, security checklist)
+9. UX P2 payment polish (units, BIP21, fee clarity, receive feedback)
 
 ## Litview / LRK
 
