@@ -35,3 +35,6 @@ src-tauri/gen
 # Env
 .env
 .env.*
+
+# Local dev [patch] overrides (see docs/LOCAL_DEV.md)
+/.cargo/config.toml
