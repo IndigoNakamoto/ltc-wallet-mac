@@ -366,6 +366,9 @@
                 Dismiss
               </button>
             </div>
+            <div class="banner banner-info" id="maturity-banner" hidden>
+              <p id="maturity-banner-text"></p>
+            </div>
             <div class="hero">
               <div class="hero-inner">
                 <span class="hero-label">Total balance</span>
@@ -373,6 +376,7 @@
                 <p class="balance-fiat" id="balance-fiat" hidden></p>
                 <p class="balance-sats" id="balance-sats">(0 litoshis)</p>
                 <p class="balance-note" id="balance-pending" hidden></p>
+                <p class="balance-note" id="balance-mweb-detail" hidden></p>
 
                 <div class="hero-stats" id="hero-stats">
                   <div class="hero-stat">
@@ -404,7 +408,14 @@
                       <circle cx="12" cy="12" r="8.5" />
                       <path d="M12 7.2V12l3.4 2" />
                     </svg>
-                    <p>No transactions yet.</p>
+                    <p class="empty-title" id="tx-empty-recent-title">No transactions yet.</p>
+                    <p class="hint empty-hint" id="tx-empty-recent-hint" hidden>
+                      Most exchanges pay to a public <code>ltc1</code> address. Move to Private later
+                      via Swap if you want confidentiality.
+                    </p>
+                    <button type="button" id="btn-fund-receive" class="btn btn-primary" hidden>
+                      Receive Litecoin
+                    </button>
                   </div>
                 </div>
 
@@ -618,7 +629,10 @@
                   </div>
                   <div id="swap-in" class="seg-panel" role="tabpanel" aria-labelledby="swap-seg-in">
                     <div class="send-form">
-                      <p class="lede">Move public funds into the MWEB side. Matures after 6 blocks.</p>
+                      <p class="lede">
+                        Move public funds into the MWEB side. Pegged-in coins cannot be spent privately
+                        until they mature (~6 confirmations).
+                      </p>
                       <label class="field">
                         <span class="field-label">Amount (LTC)</span>
                         <input id="pegin-amount" type="text" inputmode="decimal" placeholder="0.001" />
@@ -627,7 +641,10 @@
                         <input id="pegin-drain" type="checkbox" />
                         <span>Move all public funds</span>
                       </label>
-                      <p class="hint">Fees are calculated automatically (miner + private network).</p>
+                      <p class="hint">
+                        Two fees apply: a miner fee on the public chain, and a private network fee on
+                        MWEB. Both are calculated automatically.
+                      </p>
                       <div class="row">
                         <button type="button" id="btn-pegin" class="btn btn-primary">Move to private</button>
                       </div>
@@ -679,12 +696,65 @@
                   <circle cx="12" cy="12" r="8.5" />
                   <path d="M12 7.2V12l3.4 2" />
                 </svg>
-                <p>No transactions yet.</p>
+                <p class="empty-title" id="tx-empty-title">No transactions yet.</p>
+                <p class="hint empty-hint" id="tx-empty-hint" hidden>
+                  Most exchanges pay to a public <code>ltc1</code> address. Move to Private later
+                  via Swap if you want confidentiality.
+                </p>
+                <button type="button" id="btn-fund-receive-history" class="btn btn-primary" hidden>
+                  Receive Litecoin
+                </button>
               </div>
             </div>
           </section>
 
           <section id="view-settings" class="view" role="tabpanel" aria-labelledby="nav-settings" hidden>
+            <div class="card" id="security-checklist" hidden>
+              <div class="sheet-head">
+                <h3>Security checklist</h3>
+                <button type="button" id="btn-security-checklist-dismiss" class="btn btn-ghost btn-sm">
+                  Dismiss
+                </button>
+              </div>
+              <p class="lede">
+                Your balance is growing. These optional checks help keep a self-custody wallet safer —
+                they do not block sending.
+              </p>
+              <ul class="checklist" id="security-checklist-list">
+                <li class="checklist-item" data-check="backup">
+                  <span class="checklist-mark" aria-hidden="true"></span>
+                  <span>
+                    <strong>Recovery phrase verified</strong>
+                    <span class="hint">Confirmed when you created this wallet, or after restore.</span>
+                  </span>
+                </li>
+                <li class="checklist-item" data-check="autolock">
+                  <span class="checklist-mark" aria-hidden="true"></span>
+                  <span>
+                    <strong>Auto-lock enabled</strong>
+                    <span class="hint">Locks after inactivity so the passphrase is required again.</span>
+                  </span>
+                </li>
+                <li class="checklist-item" data-check="tls">
+                  <span class="checklist-mark" aria-hidden="true"></span>
+                  <span>
+                    <strong>TLS certificate verify on</strong>
+                    <span class="hint">Protects Electrum connections from man-in-the-middle attacks.</span>
+                  </span>
+                </li>
+                <li class="checklist-item" data-check="wipe">
+                  <span class="checklist-mark" aria-hidden="true"></span>
+                  <span>
+                    <strong>Know the wipe path</strong>
+                    <span class="hint">
+                      Resetting local data requires typing a confirmation phrase. Funds are only
+                      recoverable with your written recovery phrase.
+                    </span>
+                  </span>
+                </li>
+              </ul>
+            </div>
+
             <div class="card">
               <h3>Explorer</h3>
               <label class="field">

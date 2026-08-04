@@ -196,6 +196,8 @@ const THEME_KEY = "ltc-theme";
 const THEME_ORDER: ThemePref[] = ["auto", "light", "dark"];
 const BACKUP_VERIFIED_KEY = "ltc-backup-verified";
 const BACKUP_BANNER_DISMISSED_KEY = "ltc-backup-banner-dismissed";
+const MWEB_COACH_SEEN_KEY = "ltc-mweb-coach-seen";
+const SECURITY_CHECKLIST_DISMISSED_KEY = "ltc-security-checklist-dismissed";
 
 const DUST_LITOSHIS = 2940;
 const AUTO_SYNC_MS = 60_000;
@@ -205,6 +207,10 @@ const MIN_PASSPHRASE_LEN = 8;
 const QUIZ_WORD_COUNT = 3;
 /** Warn when network fee is at least half the amount being sent. */
 const HIGH_FEE_RATIO = 0.5;
+/** Peg-in coins mature after this many blocks before private spend. */
+const MWEB_PEGIN_MATURITY_BLOCKS = 6;
+/** Soft threshold for the progressive security checklist (1 LTC). */
+const SECURITY_CHECKLIST_SATS = 100_000_000;
 
 const SVG_ARROW_IN =
   '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v13"/><path d="m6 13 6 6 6-6"/></svg>';
@@ -228,6 +234,8 @@ const el = {
   mnemonicText: document.querySelector<HTMLElement>("#mnemonic-text")!,
   backupBanner: document.querySelector<HTMLElement>("#backup-banner")!,
   btnBackupBannerDismiss: document.querySelector<HTMLButtonElement>("#btn-backup-banner-dismiss")!,
+  maturityBanner: document.querySelector<HTMLElement>("#maturity-banner")!,
+  maturityBannerText: document.querySelector<HTMLElement>("#maturity-banner-text")!,
   viewTitle: document.querySelector<HTMLElement>("#view-title")!,
   networkBadge: document.querySelector<HTMLElement>("#network-badge")!,
   syncDot: document.querySelector<HTMLElement>("#sync-dot")!,
@@ -237,6 +245,7 @@ const el = {
   balanceSats: document.querySelector<HTMLElement>("#balance-sats")!,
   balanceConfirmed: document.querySelector<HTMLElement>("#balance-confirmed")!,
   balanceMweb: document.querySelector<HTMLElement>("#balance-mweb")!,
+  balanceMwebDetail: document.querySelector<HTMLElement>("#balance-mweb-detail")!,
   balanceTip: document.querySelector<HTMLElement>("#balance-tip")!,
   balancePending: document.querySelector<HTMLElement>("#balance-pending")!,
   statMweb: document.querySelector<HTMLElement>("#stat-mweb")!,
@@ -275,6 +284,9 @@ const el = {
   cardTx: document.querySelector<HTMLElement>("#card-tx")!,
   txListRecent: document.querySelector<HTMLUListElement>("#tx-list-recent")!,
   txEmptyRecent: document.querySelector<HTMLElement>("#tx-empty-recent")!,
+  txEmptyRecentTitle: document.querySelector<HTMLElement>("#tx-empty-recent-title")!,
+  txEmptyRecentHint: document.querySelector<HTMLElement>("#tx-empty-recent-hint")!,
+  btnFundReceive: document.querySelector<HTMLButtonElement>("#btn-fund-receive")!,
   btnSeeAll: document.querySelector<HTMLButtonElement>("#btn-see-all")!,
   modalOverlay: document.querySelector<HTMLElement>("#modal-overlay")!,
   modalPanel: document.querySelector<HTMLElement>("#modal-panel")!,
@@ -291,6 +303,14 @@ const el = {
   lastTxid: document.querySelector<HTMLElement>("#last-txid")!,
   txList: document.querySelector<HTMLUListElement>("#tx-list")!,
   txEmpty: document.querySelector<HTMLElement>("#tx-empty")!,
+  txEmptyTitle: document.querySelector<HTMLElement>("#tx-empty-title")!,
+  txEmptyHint: document.querySelector<HTMLElement>("#tx-empty-hint")!,
+  btnFundReceiveHistory: document.querySelector<HTMLButtonElement>("#btn-fund-receive-history")!,
+  securityChecklist: document.querySelector<HTMLElement>("#security-checklist")!,
+  securityChecklistList: document.querySelector<HTMLElement>("#security-checklist-list")!,
+  btnSecurityChecklistDismiss: document.querySelector<HTMLButtonElement>(
+    "#btn-security-checklist-dismiss",
+  )!,
   restoreMnemonic: document.querySelector<HTMLTextAreaElement>("#restore-mnemonic")!,
   createRestoreHint: document.querySelector<HTMLElement>("#create-restore-hint")!,
   restoreMwebScheme: document.querySelector<HTMLSelectElement>("#restore-mweb-scheme")!,
@@ -409,9 +429,17 @@ function isChainTxid(id: string): boolean {
   return /^[0-9a-fA-F]{64}$/.test(id.trim());
 }
 
+/** litview indexes transparent chain txs; peg-ins have a public txid. Pure MWEB ids do not. */
+function txKindExplorable(kind: TxKind): boolean {
+  return kind === "transparent" || kind === "pegin";
+}
+
 async function openExplorerForTxid(txid: string) {
   if (!isChainTxid(txid)) {
-    setStatus("This id is not a transparent transaction — nothing to open in the explorer.");
+    setStatus(
+      "Private transfers aren't on public explorers — keep the Kernel ID as your reference.",
+      "info",
+    );
     return;
   }
   try {
@@ -583,6 +611,9 @@ function setPhase(next: Phase) {
   else stopAutoSync();
   if (next !== "mnemonic") showMnemonicStep("show");
   updateBackupBanner();
+  updateMaturityBanner(0);
+  updateEmptyFundingState();
+  updateSecurityChecklist();
 }
 
 function updateTitle() {
@@ -941,11 +972,12 @@ async function openConfirm(opts: {
   message: string;
   rows?: DetailRow[];
   detail?: string;
-  warning?: string;
+  warning?: string | string[];
   destination?: string;
   confirmLabel?: string;
   danger?: boolean;
 }): Promise<boolean> {
+  const warnings = opts.warning == null ? [] : Array.isArray(opts.warning) ? opts.warning : [opts.warning];
   const result = await openModal({
     title: opts.title,
     build: (body) => {
@@ -957,7 +989,9 @@ async function openConfirm(opts: {
           addressNetworkBadge(opts.destination),
         );
       }
-      if (opts.warning) appendParagraph(body, opts.warning, "confirm-warning");
+      for (const warning of warnings) {
+        if (warning) appendParagraph(body, warning, "confirm-warning");
+      }
       if (opts.rows?.length) body.appendChild(buildDetailList(opts.rows));
       if (opts.detail) appendParagraph(body, opts.detail, "hint");
     },
@@ -980,12 +1014,14 @@ async function showResult(opts: {
   rows: DetailRow[];
   copy?: { value: string; label: string; toast: string };
   explorerTxid?: string;
-}) {
+  extraActions?: ModalAction[];
+}): Promise<string | null> {
   for (;;) {
     const actions: ModalAction[] = [];
     if (opts.explorerTxid && isChainTxid(opts.explorerTxid)) {
       actions.push({ id: "explore", label: "View on litview", kind: "secondary" });
     }
+    if (opts.extraActions?.length) actions.push(...opts.extraActions);
     if (opts.copy) actions.push({ id: "copy", label: opts.copy.label, kind: "secondary" });
     actions.push({ id: "done", label: "Done", kind: "primary" });
     const result = await openModal({
@@ -1002,8 +1038,11 @@ async function showResult(opts: {
       await openExplorerForTxid(opts.explorerTxid);
       continue;
     }
-    if (result === "copy" && opts.copy) await copyText(opts.copy.value, opts.copy.toast);
-    return;
+    if (result === "copy" && opts.copy) {
+      await copyText(opts.copy.value, opts.copy.toast);
+      continue;
+    }
+    return result;
   }
 }
 
@@ -1441,9 +1480,45 @@ function setBackupBannerDismissed(dismissed: boolean) {
   }
 }
 
+function isMwebCoachSeen(): boolean {
+  try {
+    return localStorage.getItem(MWEB_COACH_SEEN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setMwebCoachSeen(seen: boolean) {
+  try {
+    if (seen) localStorage.setItem(MWEB_COACH_SEEN_KEY, "1");
+    else localStorage.removeItem(MWEB_COACH_SEEN_KEY);
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+function isSecurityChecklistDismissed(): boolean {
+  try {
+    return localStorage.getItem(SECURITY_CHECKLIST_DISMISSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setSecurityChecklistDismissed(dismissed: boolean) {
+  try {
+    if (dismissed) localStorage.setItem(SECURITY_CHECKLIST_DISMISSED_KEY, "1");
+    else localStorage.removeItem(SECURITY_CHECKLIST_DISMISSED_KEY);
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
 function clearBackupLocalFlags() {
   setBackupVerified(false);
   setBackupBannerDismissed(false);
+  setMwebCoachSeen(false);
+  setSecurityChecklistDismissed(false);
 }
 
 function updateBackupBanner() {
@@ -1453,6 +1528,125 @@ function updateBackupBanner() {
     !isBackupVerified() &&
     !isBackupBannerDismissed();
   el.backupBanner.hidden = !show;
+}
+
+function updateMaturityBanner(immatureSats: number) {
+  const show = currentPhase === "ready" && immatureSats > 0;
+  el.maturityBanner.hidden = !show;
+  if (show) {
+    el.maturityBannerText.textContent = `${formatLtc(immatureSats)} maturing — not spendable privately yet.`;
+  }
+}
+
+function updateEmptyFundingState() {
+  const funded = lastTotalSats > 0;
+  const showFund = currentPhase === "ready" && !funded;
+
+  el.txEmptyRecentTitle.textContent = showFund
+    ? "Fund your wallet"
+    : "No transactions yet.";
+  el.txEmptyRecentHint.hidden = !showFund;
+  el.btnFundReceive.hidden = !showFund;
+
+  el.txEmptyTitle.textContent = showFund ? "Fund your wallet" : "No transactions yet.";
+  el.txEmptyHint.hidden = !showFund;
+  el.btnFundReceiveHistory.hidden = !showFund;
+}
+
+function openPublicReceive() {
+  receiveMode = "public";
+  applySegModes();
+  setCard("receive");
+}
+
+const MWEB_COACH_PANELS: Array<{ kicker: string; title: string; body: string }> = [
+  {
+    kicker: "Public",
+    title: "Public balance",
+    body: "Public addresses start with ltc1. They work with exchanges and most Litecoin wallets. Transactions are visible on public explorers.",
+  },
+  {
+    kicker: "Private",
+    title: "Private balance (MWEB)",
+    body: "Private stealth addresses start with ltcmweb1. Amounts and payment partners stay confidential among MWEB wallets.",
+  },
+  {
+    kicker: "Swap",
+    title: "Moving between Public and Private",
+    body: "Swap moves your own funds. Public → Private is a peg-in that matures after about 6 blocks before you can spend privately.",
+  },
+];
+
+async function showMwebCoach() {
+  let step = 0;
+  for (;;) {
+    const panel = MWEB_COACH_PANELS[step];
+    const isLast = step === MWEB_COACH_PANELS.length - 1;
+    const actions: ModalAction[] = [];
+    if (step > 0) actions.push({ id: "prev", label: "Back", kind: "ghost", nav: true });
+    actions.push({ id: "skip", label: "Skip", kind: "ghost" });
+    actions.push({
+      id: isLast ? "done" : "next",
+      label: isLast ? "Finish" : "Next",
+      kind: "primary",
+    });
+    const result = await openModal({
+      title: panel.title,
+      wide: true,
+      build: (body) => {
+        const kicker = document.createElement("p");
+        kicker.className = "coach-kicker";
+        kicker.textContent = `${panel.kicker} · ${step + 1} of ${MWEB_COACH_PANELS.length}`;
+        const text = document.createElement("p");
+        text.className = "coach-body";
+        text.textContent = panel.body;
+        body.append(kicker, text);
+      },
+      actions,
+      focus: () =>
+        el.modalActions.querySelector<HTMLElement>(
+          `[data-action="${isLast ? "done" : "next"}"]`,
+        ),
+    });
+    if (result === "prev") {
+      step = Math.max(0, step - 1);
+      continue;
+    }
+    if (result === "next") {
+      step = Math.min(MWEB_COACH_PANELS.length - 1, step + 1);
+      continue;
+    }
+    // Skip, Finish, Escape, or overlay dismiss — mark seen so it does not nag.
+    setMwebCoachSeen(true);
+    return;
+  }
+}
+
+function maybeShowMwebCoach() {
+  if (currentPhase !== "ready" || isMwebCoachSeen()) return;
+  void showMwebCoach();
+}
+
+function updateSecurityChecklist() {
+  const show =
+    currentPhase === "ready" &&
+    lastTotalSats >= SECURITY_CHECKLIST_SATS &&
+    !isSecurityChecklistDismissed();
+  el.securityChecklist.hidden = !show;
+  if (!show) return;
+
+  const checks: Record<string, boolean> = {
+    backup: isBackupVerified(),
+    autolock: autoLockMinutes > 0,
+    tls: el.settingsValidateTls.checked,
+    wipe: true, // informational — always “acknowledged” via static copy
+  };
+  for (const item of el.securityChecklistList.querySelectorAll<HTMLElement>(".checklist-item")) {
+    const key = item.dataset.check ?? "";
+    const ok = checks[key] === true;
+    item.classList.toggle("is-ok", ok);
+    item.classList.toggle("is-miss", !ok);
+  }
 }
 
 function renderSummary(s: WalletSummary) {
@@ -1490,7 +1684,13 @@ function renderSummary(s: WalletSummary) {
     el.balancePending.hidden = true;
     el.balancePending.textContent = "";
   }
+  // Cleared here; renderCombined repopulates when MWEB is available.
+  el.balanceMwebDetail.hidden = true;
+  el.balanceMwebDetail.textContent = "";
+  updateMaturityBanner(0);
   updateBackupBanner();
+  updateEmptyFundingState();
+  updateSecurityChecklist();
 }
 
 function renderCombined(c: CombinedSummary) {
@@ -1502,16 +1702,32 @@ function renderCombined(c: CombinedSummary) {
   lastTotalSats = grandTotal;
   renderFiat();
   setMwebVisible(true);
+
   let mwebText = formatLtc(c.mweb_total_sats);
-  if (c.mweb_immature_sats > 0) {
-    mwebText += ` · maturing ${formatLtc(c.mweb_immature_sats)}`;
-  }
   if (c.mweb_stale) {
     mwebText += c.mweb_synced_height != null
       ? ` · stale as of height ${c.mweb_synced_height}`
       : " · stale";
   }
   el.balanceMweb.textContent = mwebText;
+
+  const detailParts: string[] = [];
+  detailParts.push(`Spendable ${formatLtc(c.mweb_confirmed_sats)}`);
+  if (c.mweb_immature_sats > 0) {
+    detailParts.push(
+      `Maturing ${formatLtc(c.mweb_immature_sats)} (available after ~${MWEB_PEGIN_MATURITY_BLOCKS} confirmations)`,
+    );
+  }
+  if (c.mweb_unconfirmed_sats > 0) {
+    detailParts.push(`Unconfirmed private ${formatLtc(c.mweb_unconfirmed_sats)}`);
+  }
+  const showDetail =
+    c.mweb_immature_sats > 0 ||
+    c.mweb_unconfirmed_sats > 0 ||
+    c.mweb_total_sats > 0;
+  el.balanceMwebDetail.hidden = !showDetail;
+  el.balanceMwebDetail.textContent = showDetail ? detailParts.join(" · ") : "";
+
   el.mwebStatus.hidden = false;
   el.mwebStatus.textContent = c.mweb_status;
   if (c.mweb_receive_address) {
@@ -1519,15 +1735,18 @@ function renderCombined(c: CombinedSummary) {
     void renderQr(el.mwebQr, c.mweb_receive_address);
   }
 
-  // Spendable private balance shown on the Private toggle segments.
-  let privateBalance = formatLtc(c.mweb_confirmed_sats);
+  // Private Send shows only spendable — maturing must never look sendable.
+  el.sendBalancePrivate.textContent = formatLtc(c.mweb_confirmed_sats);
+  let privateChip = formatLtc(c.mweb_confirmed_sats);
   if (c.mweb_immature_sats > 0) {
-    privateBalance += ` · maturing ${formatLtc(c.mweb_immature_sats)}`;
+    privateChip += ` · maturing ${formatLtc(c.mweb_immature_sats)}`;
   }
-  el.sendBalancePrivate.textContent = privateBalance;
-  el.receiveBalancePrivate.textContent = privateBalance;
-  el.swapBalancePrivate.textContent = privateBalance;
+  el.receiveBalancePrivate.textContent = privateChip;
+  el.swapBalancePrivate.textContent = privateChip;
   updateBackupBanner();
+  updateMaturityBanner(c.mweb_immature_sats);
+  updateEmptyFundingState();
+  updateSecurityChecklist();
 }
 
 function renderLastTxid() {
@@ -1590,9 +1809,18 @@ function buildTxRow(tx: TxRecord, index: number): HTMLLIElement {
   main.append(amount, meta);
 
   const pill = document.createElement("span");
-  pill.className = tx.confirmations === 0 ? "pill pending" : "pill";
-  pill.textContent =
-    tx.confirmations === 0 ? "pending" : `${tx.confirmations.toLocaleString("en-US")} conf`;
+  const peginMaturing =
+    tx.kind === "pegin" && tx.confirmations < MWEB_PEGIN_MATURITY_BLOCKS;
+  if (peginMaturing) {
+    const left = Math.max(0, MWEB_PEGIN_MATURITY_BLOCKS - tx.confirmations);
+    pill.className = "pill pending";
+    pill.textContent =
+      tx.confirmations === 0 ? "maturing · pending" : `maturing · ${left} left`;
+  } else {
+    pill.className = tx.confirmations === 0 ? "pill pending" : "pill";
+    pill.textContent =
+      tx.confirmations === 0 ? "pending" : `${tx.confirmations.toLocaleString("en-US")} conf`;
+  }
 
   const txid = document.createElement("span");
   txid.className = "tx-id";
@@ -1626,6 +1854,7 @@ function renderHistory(txs: TxRecord[]) {
   el.txEmpty.hidden = txs.length > 0;
   el.txEmptyRecent.hidden = txs.length > 0;
   el.btnSeeAll.hidden = txs.length <= RECENT_TX_COUNT;
+  updateEmptyFundingState();
   txs.forEach((tx, index) => el.txList.appendChild(buildTxRow(tx, index)));
   txs
     .slice(0, RECENT_TX_COUNT)
@@ -1639,13 +1868,21 @@ async function openTxDetail(index: number) {
     const tx = txRecords[at];
     if (!tx) return;
 
-    const rows: DetailRow[] = [
-      [
-        "Status",
-        tx.confirmations === 0
+    const peginLeft =
+      tx.kind === "pegin" && tx.confirmations < MWEB_PEGIN_MATURITY_BLOCKS
+        ? Math.max(0, MWEB_PEGIN_MATURITY_BLOCKS - tx.confirmations)
+        : null;
+    const statusText =
+      peginLeft != null
+        ? tx.confirmations === 0
+          ? "Maturing — waiting for first confirmation"
+          : `Maturing — ~${peginLeft} block${peginLeft === 1 ? "" : "s"} remaining`
+        : tx.confirmations === 0
           ? "Pending — not in a block yet"
-          : `${tx.confirmations.toLocaleString("en-US")} confirmations`,
-      ],
+          : `${tx.confirmations.toLocaleString("en-US")} confirmations`;
+    const idLabel = txKindExplorable(tx.kind) ? "Transaction ID" : "Kernel ID";
+    const rows: DetailRow[] = [
+      ["Status", statusText],
       ["Type", TX_KIND_LABELS[tx.kind] || (txDirection(tx) === "in" ? "received" : "sent")],
       ["Time", formatTxTimeLong(tx.timestamp)],
     ];
@@ -1656,10 +1893,11 @@ async function openTxDetail(index: number) {
       "Fee",
       tx.fee_sats != null ? `${tx.fee_sats.toLocaleString("en-US")} litoshis` : "unknown",
     ]);
-    rows.push(["Transaction ID", tx.txid, true]);
+    rows.push([idLabel, tx.txid, true]);
 
+    const canExplore = txKindExplorable(tx.kind) && isChainTxid(tx.txid);
     let enrichment: TxEnrichment | null = null;
-    if (isChainTxid(tx.txid)) {
+    if (canExplore) {
       enrichment = txEnrichmentCache.get(tx.txid) ?? null;
       if (!enrichment) {
         try {
@@ -1683,7 +1921,6 @@ async function openTxDetail(index: number) {
 
     const hasPrev = at > 0;
     const hasNext = at < txRecords.length - 1;
-    const canExplore = isChainTxid(tx.txid);
     const actions: ModalAction[] = [];
     if (hasPrev) actions.push({ id: "prev", label: "‹ Prev", kind: "ghost", nav: true });
     if (hasNext) actions.push({ id: "next", label: "Next ›", kind: "ghost", nav: true });
@@ -1700,6 +1937,13 @@ async function openTxDetail(index: number) {
         amount.className = dir === "in" ? "detail-amount in" : "detail-amount";
         amount.textContent = formatSignedLtc(tx);
         body.append(amount, buildDetailList(rows));
+        if (!canExplore) {
+          appendParagraph(
+            body,
+            "Private transfers are not listed on public explorers — that is expected. Keep the Kernel ID as your reference.",
+            "hint",
+          );
+        }
         if (enrichment) {
           body.append(
             buildIoSection("Inputs", enrichment.inputs),
@@ -1793,6 +2037,7 @@ async function loadSettings() {
     el.settingsRpc.value = s.litecoin_rpc_url ?? "";
     el.settingsPeers.value = s.mweb_peers.join(", ");
     el.settingsMwebScheme.value = s.mweb_scheme ?? "litecoin-core";
+    updateSecurityChecklist();
   } catch {
     /* ignore */
   }
@@ -2005,6 +2250,7 @@ async function enterReady() {
   void refreshSpotPrice();
   void refreshFeeLadder();
   void runSync({ quiet: false });
+  maybeShowMwebCoach();
 }
 
 /** Phrase required by the `wipe_wallet` command; enforced backend-side too. */
@@ -2273,7 +2519,7 @@ el.btnRestore.addEventListener("click", async () => {
   try {
     const passphrase = el.restorePassphrase.value;
     const aezeedPass = el.restoreAezeedPass.value;
-    const s = await invoke<WalletSummary>("restore_wallet", {
+    await invoke<WalletSummary>("restore_wallet", {
       req: {
         mnemonic,
         network: "mainnet",
@@ -2285,18 +2531,14 @@ el.btnRestore.addEventListener("click", async () => {
     // Restoring implies the user already holds a backup; treat as verified.
     setBackupVerified(true);
     setBackupBannerDismissed(false);
-    renderSummary(s);
     el.restorePassphrase.value = "";
     el.restorePassphrase2.value = "";
     el.restoreMnemonic.value = "";
     el.restoreAezeedPass.value = "";
     syncPassMeters();
-    setPhase("ready");
-    setView("balance");
     syncing = false;
     updateBusyUi();
-    await loadSettings();
-    void runSync({ quiet: false });
+    await enterReady();
   } catch (e) {
     setError(String(e));
     syncing = false;
@@ -2342,15 +2584,20 @@ el.btnMnemonicDone.addEventListener("click", () => {
   clearPendingMnemonic();
   setBackupVerified(true);
   setBackupBannerDismissed(false);
-  setPhase("ready");
-  setView("balance");
-  void loadSettings();
-  void runSync({ quiet: false });
+  void enterReady();
 });
 
 el.btnBackupBannerDismiss.addEventListener("click", () => {
   setBackupBannerDismissed(true);
   updateBackupBanner();
+});
+
+el.btnFundReceive.addEventListener("click", () => openPublicReceive());
+el.btnFundReceiveHistory.addEventListener("click", () => openPublicReceive());
+
+el.btnSecurityChecklistDismiss.addEventListener("click", () => {
+  setSecurityChecklistDismissed(true);
+  updateSecurityChecklist();
 });
 
 el.btnSync.addEventListener("click", () => {
@@ -2653,6 +2900,7 @@ el.btnSaveSettings.addEventListener("click", async () => {
     } else {
       void refreshFeeLadder();
     }
+    updateSecurityChecklist();
     setStatus("Settings saved.", "success");
   } catch (e) {
     setError(String(e));
@@ -2696,21 +2944,26 @@ el.btnPegin.addEventListener("click", async () => {
   }
 
   const pegInFees = preview.mweb_fee_sats + preview.transparent_fee_sats;
+  const warnings: string[] = [
+    `Cannot spend privately until ~${MWEB_PEGIN_MATURITY_BLOCKS} confirmations.`,
+  ];
+  if (isHighFee(pegInFees, preview.amount_sats)) {
+    warnings.push(
+      "Combined fees are at least half of the amount you are moving. You can still proceed if this is intentional.",
+    );
+  }
   const confirmed = await openConfirm({
     title: "Move funds to private",
     message:
-      "A peg-in moves transparent funds onto the MWEB side of the chain, where balances and amounts are confidential.",
-    warning: isHighFee(pegInFees, preview.amount_sats)
-      ? "Combined fees are at least half of the amount you are moving. You can still proceed if this is intentional."
-      : undefined,
+      "A peg-in moves transparent funds onto the MWEB side of the chain, where balances and amounts are confidential. The public broadcast pays a miner fee; MWEB credits pay a private network fee.",
+    warning: warnings,
     rows: [
       ["Amount", formatLtc(preview.amount_sats)],
       ["Private credit", formatLtc(preview.private_credit_sats)],
-      ["Private network fee", formatLtc(preview.mweb_fee_sats)],
-      ["Miner fee", formatLtc(preview.transparent_fee_sats)],
+      ["Private network fee (MWEB)", formatLtc(preview.mweb_fee_sats)],
+      ["Miner fee (public chain)", formatLtc(preview.transparent_fee_sats)],
       ["Leaves transparent", formatLtc(preview.total_from_transparent_sats)],
     ],
-    detail: "Pegged-in coins mature after 6 blocks before they can be spent privately.",
     confirmLabel: drain ? "Move all to private" : "Move to private",
   });
   if (!confirmed) {
@@ -2745,7 +2998,7 @@ el.btnPegin.addEventListener("click", async () => {
   el.peginDrain.checked = false;
 
   void runSync({ quiet: false });
-  await showResult({
+  const pegInAction = await showResult({
     title: "Peg-in sent",
     message: "Broadcast to the network. The funds become spendable on the MWEB side once mature.",
     rows: [
@@ -2756,7 +3009,9 @@ el.btnPegin.addEventListener("click", async () => {
     ],
     copy: { value: result.txid, label: "Copy ID", toast: "Transaction ID copied." },
     explorerTxid: result.txid,
+    extraActions: [{ id: "history", label: "View in History", kind: "secondary" }],
   });
+  if (pegInAction === "history") setView("history");
 });
 
 el.btnMwebSend.addEventListener("click", async () => {
@@ -2844,7 +3099,8 @@ el.btnMwebSend.addEventListener("click", async () => {
   await refreshHistory();
   await showResult({
     title: "Private send sent",
-    message: "Broadcast over the MWEB network. It stays pending until a block includes it.",
+    message:
+      "Broadcast over the MWEB network. Private transfers are not listed on public explorers — that is expected. Keep the Kernel ID as your reference.",
     rows: [
       ["To", address, true],
       ["Amount", formatLtc(preview.amount_sats)],
@@ -2939,7 +3195,8 @@ el.btnPegout.addEventListener("click", async () => {
   void runSync({ quiet: false });
   await showResult({
     title: "Swap to public sent",
-    message: "Broadcast to the network. The public funds arrive once the swap confirms.",
+    message:
+      "Broadcast to the network. The public funds arrive once the swap confirms. Private transfers are not listed on public explorers — that is expected. Keep the Kernel ID as your reference.",
     rows: [
       ["To (your new public address)", address, true],
       ["Amount", formatLtc(preview.amount_sats)],

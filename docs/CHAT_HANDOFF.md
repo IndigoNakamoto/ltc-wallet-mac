@@ -52,7 +52,8 @@ Boot → Unlock | Migrate | Onboarding → Mnemonic backup → verify quiz → H
 ## UX backlog ([`docs/UX_REVIEW.md`](UX_REVIEW.md))
 
 - **Done (P0):** Hard-gated recovery-phrase quiz after create; wallet passphrase minimum 8 chars + strength meter on Create/Migrate/Restore; first-funds backup banner for unverified/legacy installs; send/swap review shows full destination, type badge, total leaving wallet, and high-fee warning (≥50% of amount).
-- **Next (P1):** Public/Private first-use coach, empty-wallet funding CTA, peg-in maturity as first-class state, Swap dual-fee / MWEB “no explorer” success copy, progressive security checklist.
+- **Done (P1):** Public/Private first-use coach (`ltc-mweb-coach-seen`); empty-wallet funding CTA → Public Receive; peg-in maturity as spendable vs maturing (+ unconfirmed private, History maturing pill); Swap dual-fee labels + MWEB “no explorer” success copy / kind-aware litview; progressive security checklist at ≥1 LTC (`ltc-security-checklist-dismissed`).
+- **Next (P2):** Unit display preference, BIP21 request/parse, fee chips/custom, received-payment feedback.
 
 ## Implementation status
 
@@ -63,6 +64,7 @@ Boot → Unlock | Migrate | Onboarding → Mnemonic backup → verify quiz → H
 5. ~~MWEB store + tip seam + peg-in/send/pegout commands + UI~~
 6. Live MWEB E2E against archive peer + RPC; notarized ship
 7. UX P0 fund-loss safety (backup verify, passphrase gate, send confirm)
+8. UX P1 MWEB comprehension (coach, funding CTA, maturity, Swap fees/explorer, security checklist)
 
 ## Litview / LRK
 

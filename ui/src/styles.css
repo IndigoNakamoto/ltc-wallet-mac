@@ -1312,6 +1312,11 @@ textarea {
   background: color-mix(in srgb, var(--warning) 12%, var(--surface));
 }
 
+.banner.banner-info {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+
 .banner p {
   margin: 0;
   color: var(--text-2);
@@ -1517,6 +1522,87 @@ textarea {
   gap: 0.5rem;
   padding: 1.75rem 0 1.25rem;
   color: var(--text-3);
+}
+
+.empty .empty-title {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.empty .empty-hint {
+  margin: 0;
+  max-width: 36ch;
+  text-align: center;
+}
+
+.empty .btn {
+  margin-top: 0.35rem;
+}
+
+.coach-kicker {
+  margin: 0 0 0.35rem;
+  color: var(--text-3);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.coach-body {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 0.95rem;
+  line-height: 1.45;
+  max-width: 42ch;
+}
+
+.checklist {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.checklist-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.checklist-item > span:last-child {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.checklist-item .hint {
+  margin: 0;
+}
+
+.checklist-mark {
+  flex: 0 0 auto;
+  width: 1.15rem;
+  height: 1.15rem;
+  margin-top: 0.1rem;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+}
+
+.checklist-item.is-ok .checklist-mark {
+  border-color: color-mix(in srgb, var(--success, #3d9a6a) 55%, var(--border));
+  background: color-mix(in srgb, var(--success, #3d9a6a) 55%, var(--surface));
+  box-shadow: inset 0 0 0 2px var(--surface);
+}
+
+.checklist-item.is-miss .checklist-mark {
+  border-color: color-mix(in srgb, var(--warning) 55%, var(--border));
 }
 
 /* ---------------------------------------------------------------------------
