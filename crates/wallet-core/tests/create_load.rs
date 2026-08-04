@@ -340,6 +340,54 @@ fn contacts_round_trip_and_wipe() {
 }
 
 #[test]
+fn pegin_manual_selection_rejects_drain_and_unknown_outpoint() {
+    use wallet_core::PeginRequest;
+
+    let dir = tempdir().unwrap();
+    let app = with_secrets(Arc::new(MemoryStore::new()));
+    app.create(
+        dir.path(),
+        CreateWalletRequest {
+            network: WalletNetwork::Testnet,
+            electrum_url: None,
+        },
+    )
+    .unwrap();
+
+    let drain_err = app
+        .preview_pegin(PeginRequest {
+            amount_sats: 0,
+            mweb_fee_sats: 0,
+            transparent_fee_sats: 500,
+            drain: true,
+            selected_outpoints: Some(vec![
+                "0000000000000000000000000000000000000000000000000000000000000000:0".into(),
+            ]),
+        })
+        .expect_err("drain + selection");
+    assert!(
+        drain_err.to_string().contains("Move all"),
+        "got {drain_err}"
+    );
+
+    let unknown_err = app
+        .preview_pegin(PeginRequest {
+            amount_sats: 10_000,
+            mweb_fee_sats: 0,
+            transparent_fee_sats: 500,
+            drain: false,
+            selected_outpoints: Some(vec![
+                "0000000000000000000000000000000000000000000000000000000000000000:0".into(),
+            ]),
+        })
+        .expect_err("unknown outpoint");
+    assert!(
+        unknown_err.to_string().contains("not an unspent"),
+        "got {unknown_err}"
+    );
+}
+
+#[test]
 fn list_unspent_empty_on_new_wallet() {
     let dir = tempdir().unwrap();
     let app = with_secrets(Arc::new(MemoryStore::new()));

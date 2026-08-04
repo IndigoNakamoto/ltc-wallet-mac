@@ -1374,6 +1374,36 @@ impl MemoryBackedApp {
         ))
     }
 
+    /// Test helper: resolve peg-in amounts / coin-control rules without broadcasting.
+    pub fn preview_pegin(&self, req: PeginRequest) -> Result<PeginPreview, WalletError> {
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|_| WalletError::Persist("wallet state lock poisoned".into()))?;
+        let state = guard.as_mut().ok_or(WalletError::NotLoaded)?;
+        // Supply an explicit transparent fee so resolve does not hit Electrum.
+        let req = PeginRequest {
+            transparent_fee_sats: if req.transparent_fee_sats > 0 {
+                req.transparent_fee_sats
+            } else {
+                500
+            },
+            ..req
+        };
+        let resolved = resolve_pegin_request(state, req)?;
+        Ok(PeginPreview {
+            amount_sats: resolved.amount_sats,
+            private_credit_sats: resolved
+                .amount_sats
+                .saturating_sub(resolved.mweb_fee_sats),
+            mweb_fee_sats: resolved.mweb_fee_sats,
+            transparent_fee_sats: resolved.transparent_fee_sats,
+            total_from_transparent_sats: resolved
+                .amount_sats
+                .saturating_add(resolved.transparent_fee_sats),
+        })
+    }
+
     fn create_or_restore(
         &self,
         data_dir: &Path,
@@ -1471,7 +1501,45 @@ fn resolve_pegin_request(
 ) -> Result<PeginRequest, WalletError> {
     let mweb_fee_sats = auto_mweb_fee(req.mweb_fee_sats);
     let transparent_fee_sats = auto_pegin_transparent_fee(state, req.transparent_fee_sats)?;
-    let spendable = state.wallet.balance().trusted_spendable().to_sat();
+    let selected = req
+        .selected_outpoints
+        .as_ref()
+        .map(|v| {
+            v.iter()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .map(parse_outpoint)
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .filter(|v| !v.is_empty());
+
+    if selected.is_some() && req.drain {
+        return Err(WalletError::BuildTx(
+            "manual coin selection cannot be used with Move all — turn off Move all first".into(),
+        ));
+    }
+
+    let spendable = if let Some(ref outpoints) = selected {
+        let mut sum = 0u64;
+        for op in outpoints {
+            let Some(utxo) = state.wallet.get_utxo(*op) else {
+                return Err(WalletError::BuildTx(format!(
+                    "selected outpoint {op} is not an unspent output in this wallet"
+                )));
+            };
+            if state.wallet.is_outpoint_locked(*op) {
+                return Err(WalletError::BuildTx(format!(
+                    "selected outpoint {op} is frozen — unfreeze it before swapping"
+                )));
+            }
+            sum = sum.saturating_add(utxo.txout.value.to_sat());
+        }
+        sum
+    } else {
+        state.wallet.balance().trusted_spendable().to_sat()
+    };
+
     let amount_sats = if req.drain {
         spendable.checked_sub(transparent_fee_sats).ok_or_else(|| {
             WalletError::BuildTx(format!(
@@ -1503,6 +1571,7 @@ fn resolve_pegin_request(
         mweb_fee_sats,
         transparent_fee_sats,
         drain: false,
+        selected_outpoints: selected.map(|ops| ops.iter().map(ToString::to_string).collect()),
     })
 }
 

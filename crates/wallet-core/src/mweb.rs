@@ -1278,13 +1278,33 @@ pub fn pegin(
     req: PeginRequest,
     network: WalletNetwork,
 ) -> Result<PeginResult, WalletError> {
+    let selected = req
+        .selected_outpoints
+        .as_ref()
+        .map(|v| {
+            v.iter()
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| {
+                    use std::str::FromStr;
+                    bdk_wallet::bitcoin::OutPoint::from_str(s.trim()).map_err(|e| {
+                        WalletError::BuildTx(format!(
+                            "invalid outpoint '{s}' (expected txid:vout): {e}"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+
     let mut prepared = wallet
-        .prepare_mweb_pegin(
+        .prepare_mweb_pegin_with_utxos(
             &runtime.keys,
             runtime.receive_index,
             Amount::from_sat(req.amount_sats),
             Amount::from_sat(req.mweb_fee_sats),
             Amount::from_sat(req.transparent_fee_sats),
+            &selected,
             &runtime.secp,
         )
         .map_err(|e| WalletError::Mweb(e.to_string()))?;

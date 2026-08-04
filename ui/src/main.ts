@@ -395,6 +395,11 @@ const el = {
   utxoList: document.querySelector<HTMLUListElement>("#utxo-list")!,
   utxoEmpty: document.querySelector<HTMLElement>("#utxo-empty")!,
   btnRefreshUtxos: document.querySelector<HTMLButtonElement>("#btn-refresh-utxos")!,
+  peginCoinControl: document.querySelector<HTMLDetailsElement>("#pegin-coin-control")!,
+  peginCoinControlSum: document.querySelector<HTMLElement>("#pegin-coin-control-sum")!,
+  peginUtxoList: document.querySelector<HTMLUListElement>("#pegin-utxo-list")!,
+  peginUtxoEmpty: document.querySelector<HTMLElement>("#pegin-utxo-empty")!,
+  btnRefreshPeginUtxos: document.querySelector<HTMLButtonElement>("#btn-refresh-pegin-utxos")!,
   feeChips: document.querySelector<HTMLElement>("#fee-chips")!,
   feeChipRow: document.querySelector<HTMLElement>("#fee-chip-row")!,
   feeCustomField: document.querySelector<HTMLElement>("#fee-custom-field")!,
@@ -482,7 +487,8 @@ let historyFilter: HistoryFilter = "all";
 let historySearchQuery = "";
 let contactsCache: ContactRecord[] = [];
 let utxoCache: UtxoRecord[] = [];
-const selectedOutpoints = new Set<string>();
+const sendSelectedOutpoints = new Set<string>();
+const peginSelectedOutpoints = new Set<string>();
 /** Local notes keyed by txid/wtxid (never sent to litview). */
 let txLabels: Record<string, string> = {};
 let autoSyncTimer: number | null = null;
@@ -3633,42 +3639,51 @@ el.btnApplyMwebScheme.addEventListener("click", async () => {
   }
 });
 
-function selectedOutpointsForSend(): string[] | undefined {
-  if (el.sendDrain.checked || selectedOutpoints.size === 0) return undefined;
-  return Array.from(selectedOutpoints);
+type CoinControlPanel = {
+  details: HTMLDetailsElement;
+  sum: HTMLElement;
+  list: HTMLUListElement;
+  empty: HTMLElement;
+  drain: HTMLInputElement;
+  selected: Set<string>;
+};
+
+function selectedOutpointsFor(panel: CoinControlPanel): string[] | undefined {
+  if (panel.drain.checked || panel.selected.size === 0) return undefined;
+  return Array.from(panel.selected);
 }
 
-function updateCoinControlSum() {
-  if (selectedOutpoints.size === 0) {
-    el.coinControlSum.hidden = true;
-    el.coinControlSum.textContent = "";
+function updateCoinControlSum(panel: CoinControlPanel) {
+  if (panel.selected.size === 0) {
+    panel.sum.hidden = true;
+    panel.sum.textContent = "";
     return;
   }
   let sum = 0;
   for (const utxo of utxoCache) {
-    if (selectedOutpoints.has(utxo.outpoint)) sum += utxo.amount_sats;
+    if (panel.selected.has(utxo.outpoint)) sum += utxo.amount_sats;
   }
-  el.coinControlSum.hidden = false;
-  el.coinControlSum.textContent = `Selected ${selectedOutpoints.size} coin${
-    selectedOutpoints.size === 1 ? "" : "s"
+  panel.sum.hidden = false;
+  panel.sum.textContent = `Selected ${panel.selected.size} coin${
+    panel.selected.size === 1 ? "" : "s"
   } · ${formatAmountPlain(sum)}`;
 }
 
-function renderUtxoList() {
-  el.utxoList.textContent = "";
-  el.utxoEmpty.hidden = utxoCache.length > 0;
+function renderUtxoList(panel: CoinControlPanel) {
+  panel.list.textContent = "";
+  panel.empty.hidden = utxoCache.length > 0;
   for (const utxo of utxoCache) {
     const li = document.createElement("li");
     li.className = utxo.locked ? "utxo-row is-locked" : "utxo-row";
 
     const check = document.createElement("input");
     check.type = "checkbox";
-    check.disabled = utxo.locked || el.sendDrain.checked;
-    check.checked = selectedOutpoints.has(utxo.outpoint);
+    check.disabled = utxo.locked || panel.drain.checked;
+    check.checked = panel.selected.has(utxo.outpoint);
     check.addEventListener("change", () => {
-      if (check.checked) selectedOutpoints.add(utxo.outpoint);
-      else selectedOutpoints.delete(utxo.outpoint);
-      updateCoinControlSum();
+      if (check.checked) panel.selected.add(utxo.outpoint);
+      else panel.selected.delete(utxo.outpoint);
+      updateCoinControlSum(panel);
     });
 
     const main = document.createElement("div");
@@ -3695,9 +3710,34 @@ function renderUtxoList() {
     freeze.addEventListener("click", () => void toggleUtxoLocked(utxo));
 
     li.append(check, main, freeze);
-    el.utxoList.appendChild(li);
+    panel.list.appendChild(li);
   }
-  updateCoinControlSum();
+  updateCoinControlSum(panel);
+}
+
+const sendCoinPanel: CoinControlPanel = {
+  details: el.coinControl,
+  sum: el.coinControlSum,
+  list: el.utxoList,
+  empty: el.utxoEmpty,
+  drain: el.sendDrain,
+  selected: sendSelectedOutpoints,
+};
+
+const peginCoinPanel: CoinControlPanel = {
+  details: el.peginCoinControl,
+  sum: el.peginCoinControlSum,
+  list: el.peginUtxoList,
+  empty: el.peginUtxoEmpty,
+  drain: el.peginDrain,
+  selected: peginSelectedOutpoints,
+};
+
+function pruneSelectedOutpoints(selected: Set<string>) {
+  const live = new Set(utxoCache.map((u) => u.outpoint));
+  for (const op of Array.from(selected)) {
+    if (!live.has(op)) selected.delete(op);
+  }
 }
 
 async function refreshUtxos() {
@@ -3706,11 +3746,10 @@ async function refreshUtxos() {
   } catch {
     utxoCache = [];
   }
-  const live = new Set(utxoCache.map((u) => u.outpoint));
-  for (const op of Array.from(selectedOutpoints)) {
-    if (!live.has(op)) selectedOutpoints.delete(op);
-  }
-  renderUtxoList();
+  pruneSelectedOutpoints(sendSelectedOutpoints);
+  pruneSelectedOutpoints(peginSelectedOutpoints);
+  renderUtxoList(sendCoinPanel);
+  renderUtxoList(peginCoinPanel);
 }
 
 async function toggleUtxoLocked(utxo: UtxoRecord) {
@@ -3718,7 +3757,10 @@ async function toggleUtxoLocked(utxo: UtxoRecord) {
     await invoke("set_utxo_locked", {
       req: { outpoint: utxo.outpoint, locked: !utxo.locked },
     });
-    if (!utxo.locked) selectedOutpoints.delete(utxo.outpoint);
+    if (!utxo.locked) {
+      sendSelectedOutpoints.delete(utxo.outpoint);
+      peginSelectedOutpoints.delete(utxo.outpoint);
+    }
     await refreshUtxos();
     setStatus(utxo.locked ? "Coin unfrozen." : "Coin frozen.", "success");
   } catch (e) {
@@ -3729,18 +3771,20 @@ async function toggleUtxoLocked(utxo: UtxoRecord) {
 el.coinControl.addEventListener("toggle", () => {
   if (el.coinControl.open) void refreshUtxos();
 });
+el.peginCoinControl.addEventListener("toggle", () => {
+  if (el.peginCoinControl.open) void refreshUtxos();
+});
 el.btnRefreshUtxos.addEventListener("click", () => void refreshUtxos());
+el.btnRefreshPeginUtxos.addEventListener("click", () => void refreshUtxos());
 
 el.sendDrain.addEventListener("change", () => {
-  if (el.sendDrain.checked) {
-    selectedOutpoints.clear();
-    renderUtxoList();
-  } else {
-    renderUtxoList();
-  }
+  if (el.sendDrain.checked) sendSelectedOutpoints.clear();
+  renderUtxoList(sendCoinPanel);
   updateBusyUi();
 });
 el.peginDrain.addEventListener("change", () => {
+  if (el.peginDrain.checked) peginSelectedOutpoints.clear();
+  renderUtxoList(peginCoinPanel);
   updateBusyUi();
 });
 el.mwebSendDrain.addEventListener("change", () => {
@@ -3781,7 +3825,7 @@ el.sendForm.addEventListener("submit", async (event) => {
     amount_sats = parsed;
   }
 
-  const selected_outpoints = selectedOutpointsForSend();
+  const selected_outpoints = selectedOutpointsFor(sendCoinPanel);
   if (drain && selected_outpoints?.length) {
     setError("Turn off Choose coins or Send all — they cannot be used together.");
     return;
@@ -3886,7 +3930,7 @@ el.sendForm.addEventListener("submit", async (event) => {
   el.sendAddress.value = "";
   el.sendAmount.value = "";
   el.sendDrain.checked = false;
-  selectedOutpoints.clear();
+  sendSelectedOutpoints.clear();
   el.coinControl.open = false;
   selectedFeeRateSatVb = null;
   customFeeActive = false;
@@ -3979,6 +4023,11 @@ el.btnLock.addEventListener("click", () => {
 el.btnPegin.addEventListener("click", async () => {
   if (syncing || sending) return;
   const drain = el.peginDrain.checked;
+  const selected_outpoints = selectedOutpointsFor(peginCoinPanel);
+  if (drain && selected_outpoints?.length) {
+    setError("Turn off Choose coins or Move all — they cannot be used together.");
+    return;
+  }
   let amount_sats = 0;
   if (!drain) {
     const parsed = parseAmountToSats(el.peginAmount.value);
@@ -3996,7 +4045,7 @@ el.btnPegin.addEventListener("click", async () => {
   let preview: PeginPreview;
   try {
     preview = await invoke<PeginPreview>("preview_pegin", {
-      req: { amount_sats, drain },
+      req: { amount_sats, drain, selected_outpoints },
     });
   } catch (e) {
     setError(String(e));
@@ -4029,6 +4078,9 @@ el.btnPegin.addEventListener("click", async () => {
       ["Private network fee (MWEB)", formatAmountPlain(preview.mweb_fee_sats)],
       ["Miner fee (public chain)", formatAmountPlain(preview.transparent_fee_sats)],
       ["Leaves transparent", formatAmountPlain(preview.total_from_transparent_sats)],
+      ...(selected_outpoints?.length
+        ? ([["Coins", `${selected_outpoints.length} selected`]] as DetailRow[])
+        : []),
     ],
     afterDetail: (body) => {
       const details = document.createElement("details");
@@ -4060,6 +4112,7 @@ el.btnPegin.addEventListener("click", async () => {
         amount_sats: preview.amount_sats,
         mweb_fee_sats: preview.mweb_fee_sats,
         transparent_fee_sats: preview.transparent_fee_sats,
+        selected_outpoints,
       },
     });
   } catch (e) {
@@ -4076,6 +4129,8 @@ el.btnPegin.addEventListener("click", async () => {
   await persistTxLabel(result.txid, pendingLabel);
   el.peginAmount.value = "";
   el.peginDrain.checked = false;
+  peginSelectedOutpoints.clear();
+  el.peginCoinControl.open = false;
 
   void runSync({ quiet: false });
   const pegInAction = await showResult({

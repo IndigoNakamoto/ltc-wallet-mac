@@ -58,7 +58,7 @@ Boot → Unlock | Migrate | Onboarding → Mnemonic backup → verify quiz → H
 - **Done (P1):** Public/Private first-use coach (`ltc-mweb-coach-seen`); empty-wallet funding CTA → Public Receive; peg-in maturity as spendable vs maturing (+ unconfirmed private, History maturing pill); Swap dual-fee labels + MWEB “no explorer” success copy / kind-aware litview; progressive security checklist at ≥1 LTC (`ltc-security-checklist-dismissed`).
 - **Done (P2):** Display unit LTC|litoshis (`ltc-display-unit`, Settings + hero tap); Public BIP21 amount/label QR + copy payment link + Send URI parse; fee chips time labels + Economy + custom sat/vB + `estimate_fee` when explorer hints off; receive toast/history pulse + first-receive modal (`ltc-first-receive-seen`).
 - **Done (P3):** Hide balances (`ltc-hide-balances`, Settings + hero LTC→litoshis→hidden); send-side transparent reuse warn via `address_reuse_hint` (warn-only; Private never warns); Settings “What leaves this computer” panel; tx labels in wipeable `tx_labels.json` sidecar (confirm note + History/detail edit).
-- **Done (P4 shippable):** History search/filter + CSV/JSON export; contacts (`contacts.json`, name + one address + Public/Private, Send picker); Public coin control (`list_unspent`, freeze, opt-in `selected_outpoints`).
+- **Done (P4 shippable):** History search/filter + CSV/JSON export; contacts (`contacts.json`, name + one address + Public/Private, Send picker); Public coin control for Send and Public→Private Swap (`list_unspent`, freeze, opt-in `selected_outpoints`).
 - **Next (P4 deferred):** Multi-wallet, hardware wallets, Tor/proxy — future architecture.
 
 ## Implementation status

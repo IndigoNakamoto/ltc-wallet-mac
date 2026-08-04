@@ -326,7 +326,7 @@ Labelled against [`CHAT_HANDOFF.md`](CHAT_HANDOFF.md) out-of-scope and Guide cha
 - **User problem:** Advanced privacy/cost control ([coin selection](https://bitcoin.design/guide/how-it-works/coin-selection/)).
 - **Proposed UX:** Opt-in UTXO picker on Public send; freeze coins; labels on UTXOs. Private side only if MWEB store can list coins safely.
 - **Acceptance criteria:** Manual selection produces preview matching selected outpoints; default path remains automatic.
-- **Shipped:** `list_unspent` / `set_utxo_locked`; `SendRequest.selected_outpoints` + Public “Choose coins”; no UTXO labels; no MWEB picker.
+- **Shipped:** `list_unspent` / `set_utxo_locked`; `selected_outpoints` on Public Send and Public→Private Swap (peg-in); no UTXO labels; no MWEB picker.
 - **Non-goals:** Making coin control default for beginners.
 
 #### P4-3 — History search, filter, export — **shipped**

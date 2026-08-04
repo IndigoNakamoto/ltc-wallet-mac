@@ -709,6 +709,19 @@
                         <input id="pegin-drain" type="checkbox" />
                         <span>Move all public funds</span>
                       </label>
+                      <details class="coin-control" id="pegin-coin-control">
+                        <summary>Choose coins (advanced)</summary>
+                        <p class="hint">
+                          Optional. Pick which public coins to peg in. Frozen coins are skipped by
+                          automatic selection. Not available with Move all.
+                        </p>
+                        <p class="hint mono" id="pegin-coin-control-sum" hidden></p>
+                        <ul id="pegin-utxo-list" class="utxo-list"></ul>
+                        <p class="hint" id="pegin-utxo-empty" hidden>No public coins yet.</p>
+                        <button type="button" id="btn-refresh-pegin-utxos" class="btn btn-ghost btn-sm">
+                          Refresh coins
+                        </button>
+                      </details>
                       <p class="hint">
                         Two fees apply: a miner fee on the public chain, and a private network fee on
                         MWEB. Both are calculated automatically.

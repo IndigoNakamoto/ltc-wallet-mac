@@ -411,6 +411,10 @@ pub struct PeginRequest {
     /// Peg in all trusted-spendable transparent funds (minus transparent fee).
     #[serde(default)]
     pub drain: bool,
+    /// When non-empty, fund the peg-in from only these transparent outpoints (`txid:vout`).
+    /// Incompatible with [`Self::drain`].
+    #[serde(default)]
+    pub selected_outpoints: Option<Vec<String>>,
 }
 
 /// Dry-run of a peg-in before broadcast.
