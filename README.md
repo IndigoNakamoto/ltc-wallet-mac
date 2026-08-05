@@ -2,6 +2,10 @@
 
 Native Litecoin wallet for macOS and Linux, built on the Litecoin BDK fork ([`LitecoinDevKit/bdk`](https://github.com/LitecoinDevKit/bdk) + [`bdk_wallet`](https://github.com/LitecoinDevKit/bdk_wallet)), with a Tauri 2 shell.
 
+**Rust product reference** for LitecoinDevKit integrators (maps-first MWEB via `wallet-core`, **not** UniFFI). Mobile bindings use a separate surface — see [ADOPTION.md](https://github.com/LitecoinDevKit/bdk/blob/litecoin/docs/ADOPTION.md).
+
+Canonical MWEB shape in `wallet-core`: Electrum/RPC tip → `MwebStore` + LIP sync → `prepare_mweb_pegin` / `fund_mweb_send` / `fund_mweb_pegout` → `sign_and_extract_funded_mweb` → broadcast (RPC + wtxid for MWEB-only).
+
 ## Status
 
 **v0.1** — BIP84 create/load, Electrum sync/send, encrypted mnemonic, receive QR, history, LTC amounts, auto-refresh.
